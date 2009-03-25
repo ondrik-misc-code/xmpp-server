@@ -15,10 +15,7 @@
 
 # The compiler
 HC=ghc
-HCFLAGS=-O2 \
-				-c
-
-LFLAGS=--make
+HCFLAGS=-O2 -threaded -Wall --make
 
 # Documentation paths
 DOC_URL=http://haskell.org/ghc/docs/latest/html/libraries
@@ -44,30 +41,19 @@ SRC=xmpp-server.hs \
 		Global.hs \
 
 
-OBJECTS= \
-	Global.o \
-	XMPPParser.o \
-	CommandEngine.o \
-	xmpp-server.o \
-
-
 # Redundant files
-REDUNDANT=*.hi
+REDUNDANT=*.hi *.o
 
 # Files that should be removed
 REMOVE=$(OUTPUT) \
-			 $(REDUNDANT) \
-			 *.o
+			 $(REDUNDANT)
 
 
 #################################### RULES ####################################
 
 all: $(OUTPUT) clean-redundant
 
-$(OUTPUT): $(OBJECTS)
-	-$(HC) $(LFLAGS) -o $@ $<
-
-%.o: %.hs
+$(OUTPUT): $(SRC)
 	-$(HC) $(HCFLAGS) -o $@ $<
 
 docs:

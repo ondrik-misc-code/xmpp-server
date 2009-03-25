@@ -26,7 +26,7 @@ import Prelude
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
-  (Handle, hGetContents, hPutStrLn, hClose, hFlush)
+  (Handle, hGetContents, hClose)
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception
@@ -35,8 +35,6 @@ import Control.Concurrent
   (forkIO)
 import Control.Concurrent.STM
   (STM, TChan, newTChan, readTChan, writeTChan, atomically, orElse, retry)
-import Control.Monad
-  (forM, filterM, liftM, when) 
 
 import XMPPParser
   (parseXMPP)
@@ -121,9 +119,9 @@ acceptLoop servSock chan = do
   -- create a communication channel for a client
   cChan <- atomically newTChan
   -- create a new thread for processing the connected client
-  cTID <- forkIO $ processClient cHandle cChan
+  forkIO $ processClient cHandle cChan
   -- send the client communication channel to the main loop
-  atomically $ writeTChan chan (cChan, cHandle, "")
+  atomically $ writeTChan chan $ initClient cChan cHandle
   -- start the loop that accepts new clients' connections
   acceptLoop servSock chan
 
@@ -167,9 +165,6 @@ commandLoop acceptChan clients = do
       new_clients <- processCommand clients handle command
       commandLoop acceptChan $ new_clients
 
--- multipleSelect :: [(TChan a, t, String)]   -- ^ A list of clients
---                -> STM (a, t, String)       -- ^ A software transactional
---                                            --   memory value
 
 {-|
   The 'multipleSelect' function tries to read data from a list of channels.
@@ -179,6 +174,6 @@ multipleSelect :: [Client]                 -- ^ A list of clients
                                            --   memory value
 multipleSelect =
   foldl orElse retry .
-    map (\(channel, handle, _) -> ((,) handle) `fmap` readTChan channel)
+    map (\(channel, handle, _, _) -> ((,) handle) `fmap` readTChan channel)
 --  foldl orElse retry . map (\(ch, ty) -> (flip (,) ty) `fmap` readTChan ch)
 --  foldl orElse retry . map (\(channel, handle, _) -> readTChan channel >>= return . (\x -> (handle, x)))

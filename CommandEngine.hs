@@ -40,10 +40,10 @@ processCommand :: [Client]      -- ^ The list of clients
 processCommand clients handle command = do
   putStrLn $ "data: " ++ command ++ " handle: " ++ show handle
   clients' <- forM clients $
-    \(ch, h, str) -> do
+    \(ch, h, state, jid) -> do
       hPutStrLn h command
       hFlush h
-      return [(ch,h, str)]
+      return [(ch, h, state, jid)]
       `catch` const (hClose h >> return [])
   let dropped = length $ filter null clients'
   when (dropped > 0) $
