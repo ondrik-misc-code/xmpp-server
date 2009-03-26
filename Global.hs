@@ -37,7 +37,8 @@ debug = True
   command engine.
  -}
 data Command
-  = Authenticate String String      -- ^ Client authentication command with
+  = Error                           -- ^ An error
+  | Authenticate String String      -- ^ Client authentication command with
                                     --   the username and the password
   deriving (Show)
 

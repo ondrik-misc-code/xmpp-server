@@ -51,24 +51,56 @@ processXMPP :: String          -- ^ The input XML string
             -> IO ()           -- ^ The return value
 processXMPP xmlstring chan = do
   let elements = getElements xmlstring
-  processElements chan elements
+  processConnection chan elements
 
 {-|
   The function that processes the list of SAX parser events.
  -}
-processElements :: TChan Command         -- ^ The channel for sending commands
-                -> [(Maybe SaxElement)]  -- ^ The list of SAX parser events (or
-                                         --   Nothing in case of an error)
-                -> IO ()                 -- ^ The return value 
-processElements chan elements = do
+processConnection :: TChan Command         -- ^ The channel for sending commands
+                  -> [(Maybe SaxElement)]  -- ^ The list of SAX parser events (or
+                                           --   Nothing in case of an error)
+                  -> IO ()                 -- ^ The return value 
+processConnection chan elements = do
+  xs <- safely chan elements $ (\x -> return ())
+  continue chan xs processConnection
+
+
+safely :: TChan Command
+       -> [(Maybe SaxElement)]
+       -> (SaxElement -> IO ())
+       -> IO [(Maybe SaxElement)]
+safely chan elements handler = do
   case elements of
-    [] -> do                  -- end of list
+    [] -> do                    -- end of list
       debugInfo "End of stream!"
-    (Nothing:_) -> do         -- an error
+      return []
+    (Nothing:_) -> do           -- an error
       debugInfo "Error!"
-    ((Just x):xs) -> do       -- a valid SAX element
+      sendCommand chan Error
+      return []
+    ((Just x):xs) -> do
       debugInfo $ showSax x
-      processElements chan xs -- process the next element
+      handler x                -- a valid SAX element
+      return xs
+
+
+continue :: TChan Command
+         -> [(Maybe SaxElement)]
+         -> (TChan Command -> [(Maybe SaxElement)] -> IO ())
+         -> IO ()
+continue chan elements contFunc = do
+  if (null elements)
+    then return ()
+    else contFunc chan elements
+
+
+{-|
+  The function that sends a command to a command channel.
+ -}
+sendCommand :: TChan Command    -- ^ The command channel
+            -> Command          -- ^ The command to be sent
+            -> IO ()            -- ^ The return value
+sendCommand chan = atomically . writeTChan chan
 
 
 {- this could maybe be used at some point... (when sending commands to the
