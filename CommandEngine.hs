@@ -38,11 +38,11 @@ processCommand :: [Client]      -- ^ The list of clients
                -> Command       -- ^ The command that is being processed
                -> IO [Client]   -- ^ The updated list of clients
 processCommand clients handle command = do
-  let cl = findByHandle handle clients
-  putStrLn $ "data: " ++ command ++ " handle: " ++ show handle
+  --let cl = findByHandle handle clients
+  debugInfo $ "data: " ++ (show command) ++ " handle: " ++ show handle
   clients' <- forM clients $
     \(ch, h, state, jid) -> do
-      hPutStrLn h command
+      hPutStrLn h (show command)
       hFlush h
       return [(ch, h, state, jid)]
       `catch` const (hClose h >> return [])

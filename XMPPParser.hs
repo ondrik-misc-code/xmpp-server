@@ -36,26 +36,68 @@ parseXMPP :: String        -- ^ The string that is loaded from the client socket
           -> TChan Command -- ^ The channel for sending data to the command loop
           -> IO ()         -- ^ The return value
 parseXMPP xmlstring chan = do
-  putStrLn "Parsing..."
-  atomically $ writeTChan chan "ahoj"
-  putStrLn xmlstring
-  printParse xmlstring
-    where printParse = putStr . showParse
+  debugInfo "Parsing..."
+  atomically $ writeTChan chan $ Authenticate "ondra" "pokus"
+  debugInfo $ "Input XML: " ++ xmlstring
+  processXMPP xmlstring chan
+  --printParse xmlstring
+
+{-|
+  This function processes XMPP protocol and sends proper commands to the
+  command channel; these are served in the command processing engine.
+ -}
+processXMPP :: String          -- ^ The input XML string
+            -> TChan Command   -- ^ The channel for sending commands
+            -> IO ()           -- ^ The return value
+processXMPP xmlstring chan = do
+  let elements = getElements xmlstring
+  processElements chan elements
+
+{-|
+  The function that processes the list of SAX parser events.
+ -}
+processElements :: TChan Command         -- ^ The channel for sending commands
+                -> [(Maybe SaxElement)]  -- ^ The list of SAX parser events (or
+                                         --   Nothing in case of an error)
+                -> IO ()                 -- ^ The return value 
+processElements chan elements = do
+  case elements of
+    [] -> do                  -- end of list
+      debugInfo "End of stream!"
+    (Nothing:_) -> do         -- an error
+      debugInfo "Error!"
+    ((Just x):xs) -> do       -- a valid SAX element
+      debugInfo $ showSax x
+      processElements chan xs -- process the next element
+
 
 {- this could maybe be used at some point... (when sending commands to the
- - main loop
+ - main loop)
 listenLoop :: IO a -> TChan a -> IO ()
 listenLoop act chan =
   sequence_ (repeat (act >>= atomically . writeTChan chan))
 -}
 
+
 {-|
-  This function transforms an XML input into a SAX parser events string.
+  This is a wrapper for HaXml 'saxParse' function that does not need the name
+  of the input file.
  -}
-showParse :: String        -- ^ The input XML string
-          -> String        -- ^ The output SAX parser events string
-showParse str = foldr ((++) . showSax) "" $ runSax str
-  where runSax = fst . (saxParse "")
+saxParse' :: String                        -- ^ The input XML string
+          -> ([SaxElement], Maybe String)  -- ^ The 'saxParse' result
+saxParse' = saxParse ""
+
+{-|
+  The function that gets the list of SAX parser events from a XML string
+ -}
+getElements :: String               -- ^ The input XML string
+            -> [Maybe SaxElement]   -- ^ The list of Just SaxElements or in
+                                    --   case of an error, Nothing
+getElements str = getNextElement $ saxParse' str
+  where getNextElement :: ([SaxElement], Maybe String) -> [Maybe SaxElement]
+        getNextElement ([], Nothing) = []         -- correct end of XML stream
+        getNextElement ([], Just _) = [Nothing] -- XML stream error
+        getNextElement ((x:xs), y) = (Just x):(getNextElement (xs, y))
 
 {-|
   The 'showSax' function is a debug function for transformation of an
@@ -102,7 +144,7 @@ showAttrValue :: Either String Reference   -- ^ The attribute value: either
                                            --   a string or a reference
               -> String                    -- ^ The output attribute value
 showAttrValue (Left str) = str
-showAttrValue _ = error "XMPP does not support XML references!"
+showAttrValue _ = error "XMPP does not support other XML attributes than strings!"
 
 {-|
   This function crops leading and trailing double quote marks from a string.

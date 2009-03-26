@@ -22,7 +22,7 @@
 module Main where
 
 import Prelude
-  hiding (catch) 
+  hiding (catch)
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
@@ -61,7 +61,7 @@ main = withSocketsDo $ do
       let port = fromIntegral (read (args!!0) :: Int)
       -- create listening socket on port
       servSock <- listenOn $ PortNumber port
-      putStrLn $ "listening on: " ++ show port
+      debugInfo $ "listening on: " ++ show port
       -- start the server
       startServer servSock `finally` sClose servSock
 
@@ -98,7 +98,7 @@ startServer :: Socket        -- ^ The socket the server will be listening on
             -> IO ()         -- ^ The return value
 startServer servSock = do
   -- create a communication channel
-  acceptChan <- atomically newTChan         
+  acceptChan <- atomically newTChan
   -- create a new thread for accepting connections
   forkIO $ acceptLoop servSock acceptChan
   -- go to the command processing loop
@@ -115,7 +115,7 @@ acceptLoop :: Socket         -- ^ The socket the loop will be listening on
 acceptLoop servSock chan = do
   -- accept an incoming connection
   (cHandle, host, port) <- accept servSock
-  putStrLn (show cHandle ++ " " ++ show host ++ " " ++ show port)
+  debugInfo $ show cHandle ++ " " ++ show host ++ " " ++ show port
   -- create a communication channel for a client
   cChan <- atomically newTChan
   -- create a new thread for processing the connected client
@@ -158,7 +158,7 @@ commandLoop acceptChan clients = do
   case recv_data of
     -- if a new client connected
     Left new_client -> do
-      putStrLn "new client"
+      debugInfo "new client"
       commandLoop acceptChan $ new_client:clients
     -- if a command arrived from a client processing thread
     Right (handle, command) -> do
