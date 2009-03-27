@@ -26,7 +26,7 @@ import Prelude
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
-  (Handle, hGetContents, hClose)
+  (Handle, hGetContents, hClose, hSetBuffering, stderr, BufferMode(..))
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception
@@ -52,18 +52,26 @@ import Global
   The 'main' function is the entry point of the program.
  -}
 main :: IO ()         -- ^ The return value
-main = withSocketsDo $ do
-  args <- getArgs
-  if (length args /= 1)
-    then printHelp
-    else do
-      -- get the port number
-      let port = fromIntegral (read (args!!0) :: Int)
-      -- create listening socket on port
-      servSock <- listenOn $ PortNumber port
-      debugInfo $ "listening on: " ++ show port
-      -- start the server
-      startServer servSock `finally` sClose servSock
+main = do
+  settings
+  withSocketsDo $ do
+    args <- getArgs
+    if (length args /= 1)
+      then printHelp
+      else do
+        -- get the port number
+        let port = fromIntegral (read (args!!0) :: Int)
+        -- create listening socket on port
+        servSock <- listenOn $ PortNumber port
+        debugInfo $ "listening on: " ++ show port
+        -- start the server
+        startServer servSock `finally` sClose servSock
+
+
+settings :: IO ()
+settings = do
+  hSetBuffering stderr LineBuffering
+
 
 {-|
   The 'printHelp' function prints help for the program.
@@ -132,10 +140,21 @@ processClient :: Handle        -- ^ The socket handle the data will be read from
               -> TChan Command -- ^ The channel the client passes data to
               -> IO ()         -- ^ The return value
 processClient handle chan = do
+--  hSetBuffering handle NoBuffering
+--  buffering <- hGetBuffering handle
+--  putStrLn $ showBuffering buffering
   contents <- hGetContents handle
   parseXMPP contents chan        -- start parsing the client stream
     `catch` (const $ return ())  -- in case of an exception, return
     `finally` hClose handle      -- when ending, close the socket 
+
+--showBuffering NoBuffering = "NoBuffering"
+--showBuffering LineBuffering = "LineBuffering"
+--showBuffering (BlockBuffering a) =
+--  case a of
+--    Nothing -> label
+--    (Just x) -> label ++ ": " ++ show x
+--  where label = "Block buffering"
 
 {-|
   The 'commandLoop' function receives commands from the client handling treads

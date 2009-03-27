@@ -38,6 +38,8 @@ debug = True
  -}
 data Command
   = Error                           -- ^ An error
+  | EndOfStream                     -- ^ End of client stream
+  | OpenStream                      -- ^ Stream openning command
   | Authenticate String String      -- ^ Client authentication command with
                                     --   the username and the password
   deriving (Show)
