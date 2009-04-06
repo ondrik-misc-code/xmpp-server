@@ -26,7 +26,8 @@ import Prelude
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
-  (Handle, hGetContents, hClose, hSetBuffering, stderr, BufferMode(..))
+  (Handle, hGetContents, hPutStrLn, hIsOpen, hClose, hGetBuffering,
+  hSetBuffering, stderr, stdout, BufferMode(..))
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception
@@ -71,6 +72,7 @@ main = do
 settings :: IO ()
 settings = do
   hSetBuffering stderr LineBuffering
+  hSetBuffering stdout NoBuffering
 
 
 {-|
@@ -97,6 +99,7 @@ printHelp = do
   putStrLn $ "  Created as a project for Functional and Logic Programming, 2009."
   putStrLn $ "  Haskell rulez!"
 
+
 {-|
   The 'startServer' function starts the server, i.e. it creates two threads:
   (i) the thread that listens for new incoming connections, and
@@ -112,6 +115,7 @@ startServer servSock = do
   -- go to the command processing loop
   commandLoop acceptChan []
 
+
 {-|
   The 'acceptLoop' function runs in a loop and accepts new incoming
   connections.
@@ -123,6 +127,8 @@ acceptLoop :: Socket         -- ^ The socket the loop will be listening on
 acceptLoop servSock chan = do
   -- accept an incoming connection
   (cHandle, host, port) <- accept servSock
+  -- disable buffering (SAX parser does not like it very much)
+  hSetBuffering cHandle NoBuffering
   debugInfo $ show cHandle ++ " " ++ show host ++ " " ++ show port
   -- create a communication channel for a client
   cChan <- atomically newTChan
@@ -133,6 +139,7 @@ acceptLoop servSock chan = do
   -- start the loop that accepts new clients' connections
   acceptLoop servSock chan
 
+
 {-|
   The 'processClient' function listens processes the data received from the client.
  -}
@@ -140,13 +147,14 @@ processClient :: Handle        -- ^ The socket handle the data will be read from
               -> TChan Command -- ^ The channel the client passes data to
               -> IO ()         -- ^ The return value
 processClient handle chan = do
---  hSetBuffering handle NoBuffering
---  buffering <- hGetBuffering handle
---  putStrLn $ showBuffering buffering
   contents <- hGetContents handle
   parseXMPP contents chan        -- start parsing the client stream
-    `catch` (const $ return ())  -- in case of an exception, return
-    `finally` hClose handle      -- when ending, close the socket 
+-- This code was commented out because it was responsible for closing the
+-- socket before the server could respond. The socket should be closed
+-- explicitly by CommandEngine
+--    `catch` (const $ return ())  -- in case of an exception, return
+--    `finally` hClose handle      -- when ending, close the socket 
+
 
 --showBuffering NoBuffering = "NoBuffering"
 --showBuffering LineBuffering = "LineBuffering"
@@ -155,6 +163,7 @@ processClient handle chan = do
 --    Nothing -> label
 --    (Just x) -> label ++ ": " ++ show x
 --  where label = "Block buffering"
+
 
 {-|
   The 'commandLoop' function receives commands from the client handling treads
@@ -177,7 +186,7 @@ commandLoop acceptChan clients = do
   case recv_data of
     -- if a new client connected
     Left new_client -> do
-      debugInfo "new client"
+      debugInfo $ "new client at " ++ show (clientGetHandle new_client)
       commandLoop acceptChan $ new_client:clients
     -- if a command arrived from a client processing thread
     Right (handle, command) -> do

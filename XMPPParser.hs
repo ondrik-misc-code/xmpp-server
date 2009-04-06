@@ -19,12 +19,17 @@
  -}
 module XMPPParser (parseXMPP) where
 
+import Control.Concurrent.STM
+  (TChan, writeTChan, atomically)
+import Data.List
+  (isPrefixOf)
+import Control.Monad
+  (when)
+
 import Text.XML.HaXml.SAX
   (SaxElement(..), saxParse)
 import Text.XML.HaXml
   (Attribute, AttValue(..), Reference)
-import Control.Concurrent.STM
-  (TChan, writeTChan, atomically)
 
 import Global
 
@@ -38,8 +43,6 @@ parseXMPP :: String        -- ^ The string that is loaded from the client socket
           -> IO ()         -- ^ The return value
 parseXMPP xmlstring chan = do
   debugInfo "Parsing..."
-  atomically $ writeTChan chan $ Authenticate "ondra" "pokus"
-  debugInfo $ "Input XML: " ++ xmlstring
   processXMPP xmlstring chan
 
 
@@ -67,14 +70,67 @@ processConnection chan elements = do
     (\x xs -> case x of
       -- an opening XML tag
       (SaxElementOpen name attrs) -> do
-        sendCommand chan OpenStream
-        processStream chan xs
+        let prefix = extractStreamNamespacePrefix attrs
+        case prefix of
+          Nothing -> sendCommand chan $ Error "No stream namespace declared!"
+          (Just pref) -> do
+            debugInfo $ "Stream prefix: " ++ pref
+            let tag = pref ++ ":stream"
+            when (name /= tag) $
+              sendCommand chan $ Error
+                ("The opening tag should be <" ++ tag ++ ">!")
+            --
+            -- TODO: detect if the tag name is prefix:stream
+            --
+            let xmlns = case (attrs `getValueOfAttribute` "xmlns") of
+                          Nothing -> ""
+                          (Just ns) -> ns
+            when (xmlns /= clientNamespace) $
+              sendCommand chan $ Error
+                ("The default namespace does not match " ++ clientNamespace)
+            let xmllang = case (attrs `getValueOfAttribute` "xml:lang") of
+                            Nothing -> defaultXMLLang
+                            (Just lang) -> lang
+            let version = case (attrs `getValueOfAttribute` "version") of
+                            Nothing -> "0.0"
+                            (Just ver) -> ver
+            debugInfo $ "Version: " ++ version
+            let isUnsupported = isUnsupportedVersion version
+            when (isUnsupported) $
+              sendCommand chan $ Error "Maximum version supported is 1.0!"
+            sendCommand chan $ OpenStream xmllang version
+            processStream pref chan xs
       -- other than the opening XML tag
-      _ -> sendCommand chan Error
+      _ -> sendCommand chan $ Error "Opening <stream> tag expected!"
     )
 
 
-processStream chan elements = ((return ()) :: IO ())
+processStream prefix chan elements =
+  safely chan elements $
+    (\x xs -> case x of
+      (SaxElementOpen name attrs) ->
+        if (name `isIqForPrefix` prefix)
+          then return ()
+          else if (name `isPresenceForPrefix` prefix)
+                 then return ()
+                 else if (name `isMessageForPrefix` prefix)
+                        then return ()
+                        else sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
+      (SaxElementTag name attrs) -> do
+        debugInfo $ "Empty tag: " ++ showSax x
+      _ -> do
+        debugInfo $ "Malformed stream!" ++ showSax x
+        sendCommand chan $ Error "Malformed stream!"
+    )
+
+
+isIqForPrefix str prefix = matchesStringForPrefix str "iq" prefix
+isPresenceForPrefix str prefix = matchesStringForPrefix str "presence" prefix
+isMessageForPrefix str prefix = matchesStringForPrefix str "message" prefix
+
+
+matchesStringForPrefix str target prefix =
+  (str == target) || (str == prefix ++ ":" ++ target)
 
 
 {-|
@@ -94,7 +150,7 @@ safely chan elements handler = do
       sendCommand chan EndOfStream
     (Nothing:_) -> do           -- an error
       debugInfo "Error!"
-      sendCommand chan Error
+      sendCommand chan $ Error "XML format error!"
     ((Just x):xs) -> do         -- a valid SAX element
       debugInfo $ showSax x
       handler x xs
@@ -223,3 +279,72 @@ cropQuotes :: String       -- ^ The input string
 cropQuotes     [] = []
 cropQuotes (x:xs) = if (x == '\"') then cropEnd xs else x:(cropEnd xs)
   where cropEnd = foldr (\y z -> if (z == "\"") then [y] else (y:z)) ""
+
+
+{-|
+  Gets the value of an attribute. It gets the first string in the attribute
+  value list, or Nothing, if there is no value.
+ -}
+getAttributeValue :: AttValue      -- ^ The attribute value list
+                  -> Maybe String  -- ^ The value of the attribute (or Nothing)
+getAttributeValue (AttValue []) = Nothing
+getAttributeValue (AttValue (x:_)) = case x of
+  (Left value) -> Just value   -- if there is a string
+  _ -> Nothing                 -- if there is something else
+
+
+{-|
+  This function gets the value of an attribute with given name from a list of
+  attributes.
+ -}
+getValueOfAttribute :: [Attribute]   -- ^ List of attributes
+                    -> String        -- ^ Name of the attribute to be retrieved
+                    -> Maybe String  -- ^ The attribute value or Nothing
+getValueOfAttribute [] _ = Nothing
+getValueOfAttribute ((attName, attValue):xs) name =
+  if (attName == name)
+    then getAttributeValue attValue
+    else xs `getValueOfAttribute` name
+
+
+{-|
+  This function retrieves the XMPP stream XML namespace prefix from a list of
+  attributes.
+ -}
+extractStreamNamespacePrefix :: [Attribute]       -- ^ The list of attributes
+                             -> Maybe String      -- ^ The XMPP stream XML
+                                                  --   namespace prefix
+extractStreamNamespacePrefix [] = Nothing
+extractStreamNamespacePrefix ((name, attr):xs) =
+  if (("xmlns" `isPrefixOf` name) && namespaceMatches attr)
+    then (Just (getPrefix name))
+    else (extractStreamNamespacePrefix xs)
+  where namespaceMatches :: AttValue -> Bool
+        namespaceMatches namespace = case (getAttributeValue namespace) of
+          Nothing -> False
+          (Just value) -> value == streamNamespace
+        getPrefix :: String -> String
+        getPrefix str = takeWhile (/= '=') $ tail $ dropWhile (/= ':') str
+
+
+{-|
+  The 'isUnsupportedVersion' function determines whether the server supports
+  (or rather does not support) the XMPP version declared by the client.
+ -}
+isUnsupportedVersion :: String    -- ^ A string with the client XMPP version
+                     -> Bool      -- ^ Does the server support such version?
+isUnsupportedVersion version =
+  case versionMajorMinor of
+    (Nothing, _) -> False
+    (_, Nothing) -> False
+    (Just maj, Just min) -> if (maj > 1) then True
+                                         else ((maj == 1) && (min > 0))
+  where versionMajorMinor = (\(x, y) -> f x (tail y)) $ span (/= '.') version
+        f major minor = (strToInt major, strToInt minor)
+        strToInt :: String
+                 -> Maybe Int
+        strToInt str = if (null (snd inputPair))
+                         then Just $ fst inputPair
+                         else Nothing
+          where inputPair = head $ reads str
+
