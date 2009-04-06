@@ -26,8 +26,7 @@ import Prelude
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
-  (Handle, hGetContents, hPutStrLn, hIsOpen, hClose, hGetBuffering,
-  hSetBuffering, stderr, stdout, BufferMode(..))
+  (Handle, hGetContents, hSetBuffering, stderr, stdout, BufferMode(..))
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception

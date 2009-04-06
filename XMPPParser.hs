@@ -15,7 +15,7 @@
 
 
 {-|
- This module contains the parser of XMPP messages. See RFC 3920 for details.
+  This module contains the parser of XMPP messages. See RFC 3920 for details.
  -}
 module XMPPParser (parseXMPP) where
 
@@ -32,6 +32,13 @@ import Text.XML.HaXml
   (Attribute, AttValue(..), Reference)
 
 import Global
+import ParserGlobal
+import IQStanzaParser
+  (processIq)
+import MessageStanzaParser
+  (processMessage)
+import PresenceStanzaParser
+  (processPresence)
 
 
 {-|
@@ -62,14 +69,13 @@ processXMPP xmlstring chan = do
   The function that processes the list of SAX parser events.
  -}
 processConnection :: TChan Command         -- ^ The channel for sending commands
-                  -> [(Maybe SaxElement)]  -- ^ The list of SAX parser events (or
+                  -> [Maybe SaxElement]    -- ^ The list of SAX parser events (or
                                            --   Nothing in case of an error)
                   -> IO ()                 -- ^ The return value 
 processConnection chan elements = do
   safely chan elements $
     (\x xs -> case x of
-      -- an opening XML tag
-      (SaxElementOpen name attrs) -> do
+      (SaxElementOpen name attrs) -> do  -- an opening XML tag
         let prefix = extractStreamNamespacePrefix attrs
         case prefix of
           Nothing -> sendCommand chan $ Error "No stream namespace declared!"
@@ -100,60 +106,37 @@ processConnection chan elements = do
               sendCommand chan $ Error "Maximum version supported is 1.0!"
             sendCommand chan $ OpenStream xmllang version
             processStream pref chan xs
-      -- other than the opening XML tag
-      _ -> sendCommand chan $ Error "Opening <stream> tag expected!"
+      (SaxCharData _) ->           -- ignore CDATA
+        processConnection chan xs
+      _ ->                         -- other than the opening XML tag or CDATA
+        sendCommand chan $ Error "Opening <stream> tag expected!"
     )
 
 
+processStream :: String
+              -> TChan Command
+              -> [Maybe SaxElement]
+              -> IO ()
 processStream prefix chan elements =
   safely chan elements $
     (\x xs -> case x of
-      (SaxElementOpen name attrs) ->
-        if (name `isIqForPrefix` prefix)
-          then return ()
-          else if (name `isPresenceForPrefix` prefix)
-                 then return ()
-                 else if (name `isMessageForPrefix` prefix)
-                        then return ()
-                        else sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
-      (SaxElementTag name attrs) -> do
+      (SaxElementOpen name attrs) -> do  -- opening XML tag
+        if (matchesStringForPrefix name "iq" prefix) then
+            processIq prefix attrs chan xs
+          else if (matchesStringForPrefix name "presence" prefix) then
+            processPresence prefix attrs chan xs
+          else if (matchesStringForPrefix name "message" prefix) then
+            processMessage attrs prefix chan xs
+          else
+            sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
+      (SaxElementTag name attrs) -> do   -- empty XML tag
         debugInfo $ "Empty tag: " ++ showSax x
-      _ -> do
+      (SaxCharData _) ->                 -- ignore CDATA
+        processStream prefix chan xs
+      _ -> do                            -- other
         debugInfo $ "Malformed stream!" ++ showSax x
         sendCommand chan $ Error "Malformed stream!"
     )
-
-
-isIqForPrefix str prefix = matchesStringForPrefix str "iq" prefix
-isPresenceForPrefix str prefix = matchesStringForPrefix str "presence" prefix
-isMessageForPrefix str prefix = matchesStringForPrefix str "message" prefix
-
-
-matchesStringForPrefix str target prefix =
-  (str == target) || (str == prefix ++ ":" ++ target)
-
-
-{-|
-  The 'safely' construction is to be used when processing SAX parser events.
-  It either processes the function passed in the handler parameter or in case
-  of an error, it sends the error message to the channel.
- -}
-safely :: TChan Command                 -- ^ The channel for sending commands
-       -> [(Maybe SaxElement)]          -- ^ The input list of SAX events 
-       -> (SaxElement -> [(Maybe SaxElement)] -> IO ())
-          -- ^ The function that handles correct SAX events
-       -> IO ()                         -- ^ The return value
-safely chan elements handler = do
-  case elements of
-    [] -> do                    -- end of stream
-      debugInfo "End of stream!"
-      sendCommand chan EndOfStream
-    (Nothing:_) -> do           -- an error
-      debugInfo "Error!"
-      sendCommand chan $ Error "XML format error!"
-    ((Just x):xs) -> do         -- a valid SAX element
-      debugInfo $ showSax x
-      handler x xs
 
 
 {-|
@@ -163,8 +146,8 @@ safely chan elements handler = do
   given by the contFunc parameter.
  -}
 continue :: TChan Command                          -- ^ The command channel
-         -> [(Maybe SaxElement)]                   -- ^ The list of SAX events   
-         -> (TChan Command -> [(Maybe SaxElement)] -> IO ())
+         -> [Maybe SaxElement]                     -- ^ The list of SAX events   
+         -> (TChan Command -> [Maybe SaxElement] -> IO ())
          -- ^ The function to apply when we want to continue processing
          -> IO ()                                  -- ^ The return value
 continue chan elements contFunc = do
@@ -172,14 +155,6 @@ continue chan elements contFunc = do
     then return ()
     else contFunc chan elements
 
-
-{-|
-  The function that sends a command to a command channel.
- -}
-sendCommand :: TChan Command    -- ^ The command channel
-            -> Command          -- ^ The command to be sent
-            -> IO ()            -- ^ The return value
-sendCommand chan = atomically . writeTChan chan
 
 
 {- this could maybe be used at some point... (when sending commands to the
@@ -218,93 +193,6 @@ getElements str = getNextElement $ saxParse' str
           (SaxElementClose _) -> (Just x):(getNextElement (xs, y))
           (SaxElementTag _ _) -> (Just x):(getNextElement (xs, y))
           (SaxCharData _) -> (Just x):(getNextElement (xs, y))
-
-
-{-|
-  The 'showSax' function is a debug function for transformation of an
-  arbitrary SAX element into a string.
- -}
-showSax :: SaxElement     -- ^ The SAX element
-        -> String         -- ^ The string representation of the SAX element
-showSax element =
-  case element of
-    (SaxComment comment) ->
-      "Comment: " ++ comment ++ " INVALID XMPP-XML ELEMENT!" ++ "\n"
-    (SaxElementOpen open_tag_name attrs) ->
-      "Element open: " ++ (cropQuotes $ show open_tag_name)
-      ++ "\n  Attributes: " ++ (showAttributes attrs) ++ "\n"
-    (SaxElementClose close_tag_name) ->
-      "Element close: " ++ (cropQuotes $ show close_tag_name) ++ "\n"
-    (SaxElementTag tag_name attrs) ->
-      "Element empty: " ++ (cropQuotes $ show tag_name) ++ "\n  Attributes: "
-      ++ (showAttributes attrs) ++ "\n"
-    (SaxCharData char_data) ->
-      "Character data: " ++ (cropQuotes $ show char_data) ++ "\n"
-    (SaxDocTypeDecl _) ->
-      "DocType: " ++ " INVALID XMPP-XML ELEMENT!" ++ "\n"
-    (SaxProcessingInstruction (target, str)) ->
-      "Processing instruction: " ++ target ++ " --- " ++ str
-      ++ " INVALID XMPP-XML ELEMENT!" ++ "\n"
-    (SaxReference _) ->
-      "Reference: " ++ " INVALID XMPP-XML ELEMENT!" ++ "\n"
-
-
-{-|
-  The 'showAttributes' function converts a list of XML attributes into
-  a string.
- -}
-showAttributes :: [Attribute]       -- ^ The string of XML attributes
-               -> String            -- ^ The output string
-showAttributes attrs = foldr ((++) . (++ " ") . showAttr ) "" attrs
-  where showAttr (name, AttValue value) =
-          name ++ "=\"" ++ (showAttrValue $ head value) ++ "\""
-
-
-{-|
-  This function shows the attribute value.
- -}
-showAttrValue :: Either String Reference   -- ^ The attribute value: either
-                                           --   a string or a reference
-              -> String                    -- ^ The output attribute value
-showAttrValue (Left str) = str
-showAttrValue _ = error "XMPP does not support other XML attributes than strings!"
-
-
-{-|
-  This function crops leading and trailing double quote marks from a string.
- -}
-cropQuotes :: String       -- ^ The input string
-           -> String       -- ^ The output string (with leading and trailing
-                           --   double quote marks removed)
-cropQuotes     [] = []
-cropQuotes (x:xs) = if (x == '\"') then cropEnd xs else x:(cropEnd xs)
-  where cropEnd = foldr (\y z -> if (z == "\"") then [y] else (y:z)) ""
-
-
-{-|
-  Gets the value of an attribute. It gets the first string in the attribute
-  value list, or Nothing, if there is no value.
- -}
-getAttributeValue :: AttValue      -- ^ The attribute value list
-                  -> Maybe String  -- ^ The value of the attribute (or Nothing)
-getAttributeValue (AttValue []) = Nothing
-getAttributeValue (AttValue (x:_)) = case x of
-  (Left value) -> Just value   -- if there is a string
-  _ -> Nothing                 -- if there is something else
-
-
-{-|
-  This function gets the value of an attribute with given name from a list of
-  attributes.
- -}
-getValueOfAttribute :: [Attribute]   -- ^ List of attributes
-                    -> String        -- ^ Name of the attribute to be retrieved
-                    -> Maybe String  -- ^ The attribute value or Nothing
-getValueOfAttribute [] _ = Nothing
-getValueOfAttribute ((attName, attValue):xs) name =
-  if (attName == name)
-    then getAttributeValue attValue
-    else xs `getValueOfAttribute` name
 
 
 {-|

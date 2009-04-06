@@ -84,7 +84,9 @@ openStream clients sender lang version = do
   -- installed, is it necessary?
   --
   let id = show time ++ (show . abs) randomPart
+  -- send DTD
   sendToClient sender $ xmlDtd
+  -- send stream opening tag
   sendToClient sender $ serializeXmlNodeOpeningTag
     ("stream:stream",
     [
@@ -98,6 +100,8 @@ openStream clients sender lang version = do
     [
       -- the content of the stream element will be added manually
     ])
+  -- send stream features
+  sendToClient sender $ serializeXmlNode ("stream:features", [], [])
   return clients
 
 

@@ -39,6 +39,10 @@ SRC=xmpp-server.hs \
 		XMPPParser.hs \
 		CommandEngine.hs \
 		Global.hs \
+		ParserGlobal.hs \
+		IQStanzaParser.hs \
+		PresenceStanzaParser.hs \
+		MessageStanzaParser.hs \
 
 
 # Redundant files

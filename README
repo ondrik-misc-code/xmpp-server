@@ -1,0 +1,1 @@
+needed modules: HaXml with SAX support (i.e. >= 1.14, preferably 1.19.7)
