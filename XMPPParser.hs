@@ -78,7 +78,9 @@ processConnection chan elements = do
       (SaxElementOpen name attrs) -> do  -- an opening XML tag
         let prefix = extractStreamNamespacePrefix attrs
         case prefix of
-          Nothing -> sendCommand chan $ Error "No stream namespace declared!"
+          Nothing -> do
+            sendCommand chan $ Error "No stream namespace declared!"
+            return Nothing
           (Just pref) -> do
             debugInfo $ "Stream prefix: " ++ pref
             let tag = pref ++ ":stream"
@@ -106,37 +108,69 @@ processConnection chan elements = do
               sendCommand chan $ Error "Maximum version supported is 1.0!"
             sendCommand chan $ OpenStream xmllang version
             processStream pref chan xs
-      (SaxCharData _) ->           -- ignore CDATA
+            return $ Just ()
+      (SaxCharData _) -> do        -- ignore CDATA
         processConnection chan xs
-      _ ->                         -- other than the opening XML tag or CDATA
+        return $ Just ()
+      _ -> do                      -- other than the opening XML tag or CDATA
         sendCommand chan $ Error "Opening <stream> tag expected!"
+        return Nothing
     )
+  return ()
 
 
-processStream :: String
-              -> TChan Command
-              -> [Maybe SaxElement]
-              -> IO ()
-processStream prefix chan elements =
+{-|
+  This function processes the content of a stream.
+ -}
+processStream :: String               -- ^ The prefix of the stream namespace
+              -> TChan Command        -- ^ The channel for sending commands
+              -> [Maybe SaxElement]   -- ^ The list of input SAX elements
+              -> IO ()                -- ^ The return value
+processStream prefix chan elements = do
+  debugInfo $ "Stream processing start"
   safely chan elements $
     (\x xs -> case x of
-      (SaxElementOpen name attrs) -> do  -- opening XML tag
-        if (matchesStringForPrefix name "iq" prefix) then
-            processIq prefix attrs chan xs
-          else if (matchesStringForPrefix name "presence" prefix) then
-            processPresence prefix attrs chan xs
-          else if (matchesStringForPrefix name "message" prefix) then
-            processMessage attrs prefix chan xs
-          else
+      (SaxElementOpen name attrs) ->
+        if (matchesStringForPrefix name "iq" prefix) then do
+          -- in case of IQ stanza
+            debugInfo $ "Start of IQ stanza processing!"
+            rem_elements <- processIq prefix attrs chan xs
+            debugInfo $ "IQ stanza processed!"
+            case rem_elements of
+              Nothing -> do
+                debugInfo $ "No remaining elements!"
+                return Nothing
+              (Just elems) -> do
+                debugInfo $ "Some remaining elements!"
+                return $ Just (processStream prefix chan elems)
+          else if (matchesStringForPrefix name "presence" prefix) then do
+          -- in case of presence stanza
+            debugInfo $ "Start of presence stanza processing!"
+            rem_elements <- processPresence prefix attrs chan xs
+            case rem_elements of
+              Nothing -> return Nothing
+              (Just elems) -> return $ Just $ processStream prefix chan elems
+          else if (matchesStringForPrefix name "message" prefix) then do
+          -- in case of message stanza
+            debugInfo $ "Start of message stanza processing!"
+            rem_elements <- processMessage prefix attrs chan xs
+            case rem_elements of
+              Nothing -> return Nothing
+              (Just elems) -> return $ Just $ processStream prefix chan elems
+          else do
             sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
+            return Nothing
       (SaxElementTag name attrs) -> do   -- empty XML tag
         debugInfo $ "Empty tag: " ++ showSax x
-      (SaxCharData _) ->                 -- ignore CDATA
-        processStream prefix chan xs
+        return Nothing
+      (SaxCharData _) -> do              -- ignore CDATA
+        return $ Just $ processStream prefix chan xs
       _ -> do                            -- other
         debugInfo $ "Malformed stream!" ++ showSax x
         sendCommand chan $ Error "Malformed stream!"
+        return Nothing
     )
+  return ()
 
 
 {-|

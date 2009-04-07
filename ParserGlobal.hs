@@ -18,7 +18,8 @@
   -}
 module ParserGlobal
   (showSax, sendCommand, getAttributeValue, getValueOfAttribute, safely,
-  safelyWorkWithAttribute, matchesStringForPrefix) where
+  safelyWorkWithAttribute, safelyGetContentString, matchesStringForPrefix)
+  where
 
 import Control.Concurrent.STM
   (TChan, writeTChan, atomically)
@@ -107,12 +108,19 @@ getAttributeValue (AttValue (x:_)) = case x of
   _ -> Nothing                 -- if there is something else
 
 
+safelyWorkWithAttribute :: [Attribute]
+                        -> TChan Command
+                        -> String
+                        -> (String -> IO (Maybe a))
+                        -> IO (Maybe a)
 safelyWorkWithAttribute attrs chan attrName f = do
   let attr = attrs `getValueOfAttribute` attrName
   case attr of
     -- in case the attribute is not in the list
-    Nothing -> sendCommand chan $ Error ("Could not find attribute \""
-                 ++ attrName ++ "\" in the list of attributes!")
+    Nothing -> do
+      sendCommand chan $ Error ("Could not find attribute \""
+        ++ attrName ++ "\" in the list of attributes!")
+      return Nothing
     -- in case the attribute is in the list
     (Just value) -> f value
 
@@ -124,20 +132,37 @@ safelyWorkWithAttribute attrs chan attrName f = do
  -}
 safely :: TChan Command                 -- ^ The channel for sending commands
        -> [Maybe SaxElement]            -- ^ The input list of SAX events 
-       -> (SaxElement -> [Maybe SaxElement] -> IO ())
+       -> (SaxElement -> [Maybe SaxElement] -> IO (Maybe a))
           -- ^ The function that handles correct SAX events
-       -> IO ()                         -- ^ The return value
+       -> IO (Maybe a)                  -- ^ The return value
 safely chan elements handler = do
   case elements of
     [] -> do                    -- end of stream
       debugInfo "End of stream!"
       sendCommand chan EndOfStream
+      return Nothing
     (Nothing:_) -> do           -- an error
       debugInfo "Error!"
       sendCommand chan $ Error "XML format error!"
+      return Nothing
     ((Just x):xs) -> do         -- a valid SAX element
       debugInfo $ showSax x
       handler x xs
+
+
+{-|
+  A function that safely gets a string content from an XML element (or
+  Nothing).
+ -}
+safelyGetContentString :: TChan Command
+                       -> [Maybe SaxElement]
+                       -> IO (Maybe (String, [Maybe SaxElement]))
+safelyGetContentString chan elements =
+  safely chan elements $
+    (\x xs -> case x of
+      (SaxCharData str) -> return $ Just (str, xs)     -- CDATA
+      _ -> return Nothing                              -- other
+    )
 
 
 {-|

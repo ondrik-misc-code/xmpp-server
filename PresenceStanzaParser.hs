@@ -19,7 +19,23 @@
  -}
 module PresenceStanzaParser (processPresence) where
 
+import Control.Concurrent.STM
+  (TChan, writeTChan, atomically)
+
+import Text.XML.HaXml.SAX
+  (SaxElement(..), saxParse)
+import Text.XML.HaXml
+  (Attribute, AttValue(..), Reference)
+
+import Global
+import ParserGlobal
 
 
-processPresence prefix attrs chan elements = return ()
+
+processPresence :: String
+                -> [Attribute]
+                -> TChan Command
+                -> [Maybe SaxElement]
+                -> IO (Maybe [Maybe SaxElement])
+processPresence prefix attrs chan elements = return $ Just elements
 

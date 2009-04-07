@@ -34,6 +34,37 @@ import Control.Monad
 import Global
 
 
+streamFeatures :: XmlNode
+streamFeatures = ("stream:features", [], [{-mechanisms,-} auth])
+  where mechanisms :: XmlContent
+        mechanisms = XmlContentNode
+          (
+            "mechanisms",
+            [("xmlns", saslNamespace)],
+            [XmlContentNode ("mechanism", [], [XmlContentString "PLAIN"])]
+          )
+        auth :: XmlContent
+        auth = XmlContentNode
+          (
+            "auth",
+            [("xmlns", iqAuthNamespace)],
+            []
+          )
+
+
+authenticationFields :: XmlNode
+authenticationFields = (
+    "query",
+    [
+      ("xmlns", authNamespace)
+    ],
+    [
+      XmlContentNode ("username", [], []),
+      XmlContentNode ("password", [], []),
+      XmlContentNode ("resource", [], [])
+    ]
+  )
+
 {-|
   The 'processCommand' function receives a list of clients, a command and
   a handle (to identify the thread that sent the command) and processes the
@@ -55,7 +86,16 @@ processCommand clients handle command = do
     (Just sender) -> do
       debugInfo $ "data: " ++ (show command) ++ " handle: " ++ show handle
       case command of
-        (OpenStream lang ver) -> openStream clients sender lang ver >>= return
+        (OpenStream lang ver) -> do         -- opening stream
+          openStream clients sender lang ver
+        (Authenticate auths ident) -> do    -- trying to authenticate
+          case auths of
+            (Nothing, _, _) -> invalidAuthQuery sender ident
+            (_, Nothing, _) -> invalidAuthQuery sender ident
+            (_, _, Nothing) -> invalidAuthQuery sender ident
+            (username, password, resource) ->
+              authQuery username password resource ident
+          return clients
 --      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
 --      clients' <- forM clients $
 --        \(ch, h, state, jid) -> do
@@ -101,8 +141,30 @@ openStream clients sender lang version = do
       -- the content of the stream element will be added manually
     ])
   -- send stream features
-  sendToClient sender $ serializeXmlNode ("stream:features", [], [])
+  sendToClient sender $ serializeXmlNode streamFeatures
   return clients
+
+
+{-|
+  This is the handler for invalid client authentication query.
+ -}
+invalidAuthQuery :: Client    -- ^ The sender of the authentication query
+                 -> String    -- ^ The authentication query ID
+                 -> IO ()     -- ^ The return value
+invalidAuthQuery sender ident = sendToClient sender $
+  serializeXmlNode $
+    (
+      "iq",
+      [
+        ("type", "result"),
+        ("id", ident)
+      ],
+      [
+        XmlContentNode authenticationFields
+      ]
+    )
+
+authQuery username password resource ident = return ()
 
 
 {-|

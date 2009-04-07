@@ -19,7 +19,23 @@
  -}
 module MessageStanzaParser (processMessage) where
 
+import Control.Concurrent.STM
+  (TChan, writeTChan, atomically)
+
+import Text.XML.HaXml.SAX
+  (SaxElement(..), saxParse)
+import Text.XML.HaXml
+  (Attribute, AttValue(..), Reference)
+
+import Global
+import ParserGlobal
 
 
-processMessage prefix attrs chan elements = return ()
+
+processMessage :: String
+               -> [Attribute]
+               -> TChan Command
+               -> [Maybe SaxElement]
+               -> IO (Maybe [Maybe SaxElement])
+processMessage prefix attrs chan elements = return $ Just elements
 
