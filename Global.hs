@@ -92,10 +92,24 @@ saslNamespace = "urn:ietf:params:xml:ns:xmpp-sasl"
 
 
 {-|
+  The string constant with the error namespace
+ -}
+errorNamespace :: String              -- ^ The error namespace
+errorNamespace = "urn:ietf:params:xml:ns:xmpp-stanzas"
+
+
+{-|
   The string constant with the IQ authentication namespace
  -}
 iqAuthNamespace :: String             -- ^ The IQ auth namespace
 iqAuthNamespace = "http://jabber.org/features/iq-auth"
+
+
+{-|
+  The string constant with the command namespace
+ -}
+commandNamespace :: String            -- ^ The command namespace
+commandNamespace = "http://jabber.org/protocol/commands"
 
 
 {-|
@@ -117,6 +131,8 @@ data Command
   | UnknownIqNamespace String String -- ^ Unknown IQ namespace command with
                                      --     * the namespace
                                      --     * the ID of the IQ stanza query
+  | SendMessage Message              -- ^ Client send message command with
+                                     --   the message
   deriving (Show)
 
 
@@ -150,13 +166,9 @@ showJIDNoResource (node, domain, resource) = node ++ "@" ++ domain
 
 {-|
   The authentication structure
-
      * The name
-
      * The password
-
      * The resource
-
   If a field is missing, there is Nothing instead.
  -}
 type AuthStruct = (Maybe String, Maybe String, Maybe String)
@@ -194,6 +206,24 @@ setResource :: AuthStruct   -- ^ The 'AuthStruct' structure
             -> String       -- ^ The resource
             -> AuthStruct   -- ^ The resulting 'AuthStruct'
 setResource (username, passwd, _) resource = (username, passwd, Just resource)
+
+
+{-|
+  The type for XMPP message. It consists of:
+    * Target JID
+    * Message subject
+    * Message body
+    * Message thread
+  If a field is missing, there is Nothing instead.
+ -}
+type Message = (Maybe String, Maybe String, Maybe String, Maybe String)
+
+
+{-|
+  The function that initializes the 'Message' structure
+ -}
+initMessage :: Message      -- ^ An initialized 'Message' structure
+initMessage = (Nothing, Nothing, Nothing, Nothing)
 
 
 {-|
@@ -366,6 +396,31 @@ clientAuthenticate client (_, Nothing, _) domain = client
 clientAuthenticate client (_, _, Nothing) domain = client
 clientAuthenticate (ch, h, Unauth, _) (Just node, _, Just resource) domain =
   (ch, h, Auth, (node, domain, resource))
+
+
+{-|
+  A function that determines whether a client is authenticated.
+ -}
+clientIsAuth :: Client     -- ^ The client
+             -> Bool       -- ^ Is the client authenticated?
+clientIsAuth (_, _, Unauth, _) = False
+clientIsAuth (_, _, Auth, _) = True
+
+{-|
+  This function transforms a client into a roster item that represents the
+  client.
+ -}
+clientToRosterItem :: Client            -- ^ The client
+                   -> XmlNode           -- ^ The roster item XML node
+clientToRosterItem client =
+  (
+    "item",
+    [
+      ("jid", showJIDNoResource (clientGetJID client)),
+      ("subscription", "both")
+    ],
+    []
+  )
 
 
 {-|

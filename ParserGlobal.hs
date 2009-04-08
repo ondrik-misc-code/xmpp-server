@@ -25,7 +25,7 @@ import Control.Concurrent.STM
   (TChan, writeTChan, atomically)
 
 import Text.XML.HaXml.SAX
-  (SaxElement(..), saxParse)
+  (SaxElement(..))
 import Text.XML.HaXml
   (Attribute, AttValue(..), Reference)
 

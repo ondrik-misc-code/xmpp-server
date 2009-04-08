@@ -21,12 +21,12 @@ module IQStanzaParser (processIq) where
 
 
 import Control.Concurrent.STM
-  (TChan, writeTChan, atomically)
+  (TChan)
 
 import Text.XML.HaXml.SAX
-  (SaxElement(..), saxParse)
+  (SaxElement(..))
 import Text.XML.HaXml
-  (Attribute, AttValue(..), Reference)
+  (Attribute)
 
 import Global
 import ParserGlobal
@@ -39,66 +39,60 @@ processIq :: String
           -> IO (Maybe [Maybe SaxElement])
 processIq prefix attrs chan elements = do
   safelyWorkWithAttribute attrs chan "id" $
-    (\x -> processIqWithId prefix attrs chan elements x)
+    (\x -> processIqWithId prefix chan elements x)
   where processIqWithId :: String
-                        -> [Attribute]
                         -> TChan Command
                         -> [Maybe SaxElement]
                         -> String
                         -> IO (Maybe [Maybe SaxElement])
-        processIqWithId prefix attrs chan elements ident =
-          case (attrs `getValueOfAttribute` "id") of
-            Nothing -> do
-              sendCommand chan $
-                Error "An IQ stanza does not include \"id\" attribute!"
-              return Nothing
-            (Just id) -> safely chan elements $
-              (\x xs -> case x of
-                (SaxElementOpen name n_attrs) -> do   -- opening XML tag
-                  safelyWorkWithAttribute n_attrs chan "xmlns" $
-                    (\xmlns ->
-                      if (xmlns == authNamespace) then do
-                          -- in case the namespace does not match the authentication namespace
-                          remaining <- processAuthQuery name prefix chan xs ident
-                          case remaining of
-                            Nothing -> return Nothing
-                            (Just xss) -> do
-                              rem_no_iq <- consumeClosingTag prefix chan xss "iq"
-                              return rem_no_iq
-                        else if (xmlns == rosterNamespace) then do
-                          debugInfo $ "Huraaa roster"
-                          remaining <- consumeClosingTag prefix chan xs "iq"
-                          return remaining
-                        else do
-                          sendCommand chan $ UnknownIqNamespace xmlns ident
-                          remaining <- consumeClosingTag prefix chan xs "iq"
-                          return remaining
-                    )
-                (SaxElementTag name n_attrs) -> do    -- empty XML tag
-                  safelyWorkWithAttribute n_attrs chan "xmlns" $
-                    (\xmlns ->
-                      if (xmlns == authNamespace) then do
-                          -- in case the namespace does not match the authentication namespace
-                          sendCommand chan $ Authenticate initAuthStruct ident
-                          rem_elements <- consumeClosingTag prefix chan xs "iq"
-                          return rem_elements
-                        else if (xmlns == rosterNamespace) then do
-                          debugInfo $ "Huraaa roster"
-                          sendCommand chan $ SendRoster ident
-                          remaining <- consumeClosingTag prefix chan xs "iq"
-                          return remaining
-                        else do
-                          sendCommand chan $ UnknownIqNamespace xmlns ident
-                          remaining <- consumeClosingTag prefix chan xs "iq"
-                          return remaining
-                    )
-                (SaxCharData _) -> do                   -- ignore CDATA
-                  processIqWithId prefix attrs chan xs ident
-                _ -> do                                 -- other
-                  debugInfo $ "Malformed stream!" ++ showSax x
-                  sendCommand chan $ Error "Malformed stream!"
-                  return Nothing
-              )
+        processIqWithId pref ch elems ident =
+          safely ch elems $
+            (\x xs -> case x of
+              (SaxElementOpen name n_attrs) -> do   -- opening XML tag
+                safelyWorkWithAttribute n_attrs ch "xmlns" $
+                  (\xmlns ->
+                    if (xmlns == authNamespace) then do
+                        -- in case the namespace does not match the authentication namespace
+                        remaining <- processAuthQuery name pref ch xs ident
+                        case remaining of
+                          Nothing -> return Nothing
+                          (Just xss) -> do
+                            rem_no_iq <- consumeClosingTag pref ch xss "iq"
+                            return rem_no_iq
+                      else if (xmlns == rosterNamespace) then do
+                        sendCommand ch $ SendRoster ident
+                        remaining <- consumeClosingTag pref ch xs "iq"
+                        return remaining
+                      else do
+                        sendCommand ch $ UnknownIqNamespace xmlns ident
+                        remaining <- consumeTagsUpTo pref ch xs "iq"
+                        return remaining
+                  )
+              (SaxElementTag _ n_attrs) -> do       -- empty XML tag
+                safelyWorkWithAttribute n_attrs ch "xmlns" $
+                  (\xmlns ->
+                    if (xmlns == authNamespace) then do
+                        -- in case the namespace does not match the authentication namespace
+                        sendCommand ch $ Authenticate initAuthStruct ident
+                        rem_elements <- consumeClosingTag pref ch xs "iq"
+                        return rem_elements
+                      else if (xmlns == rosterNamespace) then do
+                        debugInfo $ "Huraaa roster"
+                        sendCommand ch $ SendRoster ident
+                        remaining <- consumeClosingTag pref ch xs "iq"
+                        return remaining
+                      else do
+                        sendCommand ch $ UnknownIqNamespace xmlns ident
+                        remaining <- consumeTagsUpTo pref ch xs "iq"
+                        return remaining
+                  )
+              (SaxCharData _) -> do                   -- ignore CDATA
+                processIqWithId pref ch xs ident
+              _ -> do                                 -- other
+                debugInfo $ "Malformed stream!" ++ showSax x
+                sendCommand ch $ Error "Malformed stream!"
+                return Nothing
+            )
 
 
 {-|
@@ -124,88 +118,88 @@ processAuthQuery name prefix chan elements ident =
                                   -> String
                                   -> AuthStruct
                                   -> IO (Maybe [Maybe SaxElement])
-        processAuthQueryWithQuery prefix chan elements ident auths =
-          safely chan elements $
+        processAuthQueryWithQuery pref ch elems iden auths =
+          safely ch elems $
             (\x xs -> case x of
-              (SaxElementOpen name new_attrs) -> do     -- opening XML tag
-                if (matchesStringForPrefix name "username" prefix) then do
+              (SaxElementOpen n_name _) -> do           -- opening XML tag
+                if (matchesStringForPrefix n_name "username" pref) then do
                     debugInfo $ "Username"
                     strList <- stringPlusList xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
-                        sendCommand chan $
+                        sendCommand ch $
                           Error "The username tag has no CDATA contents!"
                         return Nothing
                       (Just (str, xss)) -> do           -- with CDATA contents
-                        remaining <- consumeClosingTag prefix chan xss "username"
+                        remaining <- consumeClosingTag pref ch xss "username"
                         case remaining of
                           Nothing -> return Nothing
                           (Just xsss) -> do
-                            rem_elements <- processAuthQueryWithQuery prefix chan
-                              xsss ident (auths `setUsername` str)
+                            rem_elements <- processAuthQueryWithQuery pref ch
+                              xsss iden (auths `setUsername` str)
                             return rem_elements
-                  else if (matchesStringForPrefix name "password" prefix) then do
+                  else if (matchesStringForPrefix name "password" pref) then do
                     debugInfo $ "Password"
                     strList <- stringPlusList xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
-                        sendCommand chan $
+                        sendCommand ch $
                           Error "The password tag has no CDATA contents!"
                         return Nothing
                       (Just (str, xss)) -> do           -- with CDATA contents
-                        remaining <- consumeClosingTag prefix chan xss "password"
+                        remaining <- consumeClosingTag pref ch xss "password"
                         case remaining of
                           Nothing -> return Nothing
                           (Just xsss) -> do
-                            rem_elements <- processAuthQueryWithQuery prefix chan
-                              xsss ident (auths `setPassword` str)
+                            rem_elements <- processAuthQueryWithQuery pref ch
+                              xsss iden (auths `setPassword` str)
                             return rem_elements
-                  else if (matchesStringForPrefix name "resource" prefix) then do
+                  else if (matchesStringForPrefix name "resource" pref) then do
                     debugInfo $ "Resource"
                     strList <- stringPlusList xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
-                        sendCommand chan $
+                        sendCommand ch $
                           Error "The resource tag has no CDATA contents!"
                         return Nothing
                       (Just (str, xss)) -> do           -- with CDATA contents
-                        remaining <- consumeClosingTag prefix chan xss "resource"
+                        remaining <- consumeClosingTag pref ch xss "resource"
                         case remaining of
                           Nothing -> return Nothing
                           (Just xsss) -> do
-                            rem_elements <- processAuthQueryWithQuery prefix chan
-                              xsss ident (auths `setResource` str)
+                            rem_elements <- processAuthQueryWithQuery pref ch
+                              xsss iden (auths `setResource` str)
                             return rem_elements
                   else do
-                    sendCommand chan $
+                    sendCommand ch $
                       Error $ "Invalid tag in authentication query: " ++ name
                     return Nothing
                 --
                 -- TODO: do something
                 --
-              (SaxElementClose name) ->                 -- closing XML tag
-                if (matchesStringForPrefix name "query" prefix) then do
-                    sendCommand chan $ Authenticate auths ident
+              (SaxElementClose n_name) ->                 -- closing XML tag
+                if (matchesStringForPrefix n_name "query" pref) then do
+                    sendCommand ch $ Authenticate auths ident
                     return $ Just xs
                   else do
-                    sendCommand chan $ Error $ "Malformed XML! "
+                    sendCommand ch $ Error $ "Malformed XML! "
                       ++ "Invalid XML close tag at processAuthQueryWithXmlns: "
-                      ++ name
+                      ++ n_name
                     return Nothing
-              (SaxElementTag name new_attrs) -> do      -- empty XML tag
-                debugInfo $ "Empty tag: " ++ showSax x
+              (SaxElementTag n_name _) -> do            -- empty XML tag
+                debugInfo $ "Empty tag: " ++ n_name
                 return Nothing
               (SaxCharData _) -> do                     -- ignore CDATA
-                rem_elements <- processAuthQueryWithQuery prefix chan xs ident auths
+                rem_elements <- processAuthQueryWithQuery pref ch xs iden auths
                 return rem_elements
               _ -> do                                   -- other
                 debugInfo $ "Malformed stream!" ++ showSax x
-                sendCommand chan $ Error "Malformed stream!"
+                sendCommand ch $ Error "Malformed stream!"
                 return Nothing
             )
           where stringPlusList :: [Maybe SaxElement]
                                -> IO (Maybe (String, [Maybe SaxElement]))
-                stringPlusList elems = safelyGetContentString chan elems
+                stringPlusList elms = safelyGetContentString ch elms
 
 
 {-

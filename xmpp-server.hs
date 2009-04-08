@@ -30,7 +30,7 @@ import System.IO
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception
-  (finally, catch)
+  (finally, {-catch-})
 import Control.Concurrent
   (forkIO)
 import Control.Concurrent.STM

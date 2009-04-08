@@ -102,7 +102,9 @@ processCommand clients handle command = do
               return clients
             validAuth@(Just username, Just password, Just resource) -> do
               authQuery username password resource sender ident
-              return $ (clientAuthenticate sender validAuth hostname):
+              let new_client = clientAuthenticate sender validAuth hostname
+              sendClientPresence new_client clients
+              return $ new_client:
                 (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
         (UnknownIqNamespace namespace ident) -> do
           unknownIqNs sender namespace ident
@@ -210,15 +212,34 @@ unknownIqNs sender namespace ident =
         ("type", "error"),
         ("id", ident)
       ],
-      {-[
+      [
         XmlContentNode
           (
             "query",
             [
               ("xmlns", namespace),
-              ("node", 
-      -}
-      []
+              ("node", commandNamespace)
+            ],
+            []
+          ),
+        XmlContentNode
+          (
+            "error",
+            [
+              ("type", "cancel")
+            ],
+            [
+              XmlContentNode
+                (
+                  "feature-not-implemented",
+                  [
+                    ("xmlns", errorNamespace)
+                  ],
+                  []
+                )
+            ]
+          )
+      ]
     )
 
 
@@ -235,17 +256,37 @@ sendClientRoster sender clients ident = sendToClient sender $ serializeXmlNode
     ],
     allClients
   )
-  where allClients = map XmlContentNode $ foldr (\x z -> (clientToRosterItem x):z) [] clients
+  where allClients = map XmlContentNode $
+          foldr (\x z -> (clientToRosterItem x):z) [] clients
 
 
-clientToRosterItem :: Client
-                   -> XmlNode
-clientToRosterItem client =
+{-|
+  This function sends the client presence to all requested clients.
+ -}
+sendClientPresence :: Client        -- ^ The input client
+                   -> [Client]      -- ^ The list of target clients of the
+                                    --   presence message
+                   -> IO ()         -- ^ The return value
+sendClientPresence newClient clients =
+  foldr (\x z -> sendToClient x (serializeXmlNode $
+    newClient `createPresenceFor` x) >>= return z) (return ()) authClients
+  where authClients = filter clientIsAuth clients
+
+
+{-|
+  The function to create a presence XML node from a source client to a target
+  client.
+ -}
+createPresenceFor :: Client     -- ^ The source client
+                  -> Client     -- ^ The target client
+                  -> XmlNode    -- ^ The presence XML node
+createPresenceFor sender target =
   (
-    "item",
+    "presence",
     [
-      ("jid", showJIDNoResource (clientGetJID client)),
-      ("subscription", "both")
+      ("from", showJID $ clientGetJID sender),
+      ("to", showJIDNoResource $ clientGetJID target),
+      ("type", "probe")
     ],
     []
   )

@@ -20,7 +20,7 @@
 module XMPPParser (parseXMPP) where
 
 import Control.Concurrent.STM
-  (TChan, writeTChan, atomically)
+  (TChan)
 import Data.List
   (isPrefixOf)
 import Control.Monad
@@ -29,7 +29,7 @@ import Control.Monad
 import Text.XML.HaXml.SAX
   (SaxElement(..), saxParse)
 import Text.XML.HaXml
-  (Attribute, AttValue(..), Reference)
+  (Attribute, AttValue(..))
 
 import Global
 import ParserGlobal
@@ -38,7 +38,7 @@ import IQStanzaParser
 import MessageStanzaParser
   (processMessage)
 import PresenceStanzaParser
-  (processPresence)
+  (processPresence, processPresenceEmpty)
 
 
 {-|
@@ -166,8 +166,15 @@ processStream prefix chan elements = do
             sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
             return Nothing
       (SaxElementTag name attrs) -> do   -- empty XML tag
-        debugInfo $ "Empty tag: " ++ showSax x
-        return Nothing
+        if (matchesStringForPrefix name "presence" prefix) then do
+          -- in case of presence stanza
+            debugInfo $ "Start of presence stanza processing!"
+            processPresenceEmpty attrs chan
+            remaining <- processStream prefix chan xs
+            return $ Just remaining
+          else do
+            sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
+            return Nothing
       (SaxCharData _) -> do              -- ignore CDATA
         remaining <- processStream prefix chan xs
         return $ Just remaining
@@ -185,15 +192,15 @@ processStream prefix chan elements = do
   processing. The continuation of processing is done by applying the function
   given by the contFunc parameter.
  -}
-continue :: TChan Command                          -- ^ The command channel
-         -> [Maybe SaxElement]                     -- ^ The list of SAX events   
-         -> (TChan Command -> [Maybe SaxElement] -> IO ())
-         -- ^ The function to apply when we want to continue processing
-         -> IO ()                                  -- ^ The return value
-continue chan elements contFunc = do
-  if (null elements)
-    then return ()
-    else contFunc chan elements
+--continue :: TChan Command                          -- ^ The command channel
+--         -> [Maybe SaxElement]                     -- ^ The list of SAX events   
+--         -> (TChan Command -> [Maybe SaxElement] -> IO ())
+--         -- ^ The function to apply when we want to continue processing
+--         -> IO ()                                  -- ^ The return value
+--continue chan elements contFunc = do
+--  if (null elements)
+--    then return ()
+--    else contFunc chan elements
 
 
 
@@ -265,8 +272,8 @@ isUnsupportedVersion version =
   case versionMajorMinor of
     (Nothing, _) -> False
     (_, Nothing) -> False
-    (Just maj, Just min) -> if (maj > 1) then True
-                                         else ((maj == 1) && (min > 0))
+    (Just maj, Just mino) -> if (maj > 1) then True
+                                          else ((maj == 1) && (mino > 0))
   where versionMajorMinor = (\(x, y) -> f x (tail y)) $ span (/= '.') version
         f major minor = (strToInt major, strToInt minor)
         strToInt :: String
