@@ -141,22 +141,27 @@ processStream prefix chan elements = do
                 debugInfo $ "No remaining elements!"
                 return Nothing
               (Just elems) -> do
-                debugInfo $ "Some remaining elements!"
-                return $ Just (processStream prefix chan elems)
+                debugInfo $ "The stream continues!"
+                remaining <- processStream prefix chan elems
+                return $ Just remaining
           else if (matchesStringForPrefix name "presence" prefix) then do
           -- in case of presence stanza
             debugInfo $ "Start of presence stanza processing!"
             rem_elements <- processPresence prefix attrs chan xs
             case rem_elements of
               Nothing -> return Nothing
-              (Just elems) -> return $ Just $ processStream prefix chan elems
+              (Just elems) -> do
+                remaining <- processStream prefix chan elems
+                return $ Just remaining
           else if (matchesStringForPrefix name "message" prefix) then do
           -- in case of message stanza
             debugInfo $ "Start of message stanza processing!"
             rem_elements <- processMessage prefix attrs chan xs
             case rem_elements of
               Nothing -> return Nothing
-              (Just elems) -> return $ Just $ processStream prefix chan elems
+              (Just elems) -> do
+                remaining <- processStream prefix chan elems
+                return $ Just remaining
           else do
             sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
             return Nothing
@@ -164,7 +169,8 @@ processStream prefix chan elements = do
         debugInfo $ "Empty tag: " ++ showSax x
         return Nothing
       (SaxCharData _) -> do              -- ignore CDATA
-        return $ Just $ processStream prefix chan xs
+        remaining <- processStream prefix chan xs
+        return $ Just remaining
       _ -> do                            -- other
         debugInfo $ "Malformed stream!" ++ showSax x
         sendCommand chan $ Error "Malformed stream!"

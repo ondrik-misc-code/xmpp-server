@@ -76,6 +76,7 @@ processCommand :: [Client]      -- ^ The list of clients
                -> IO [Client]   -- ^ The updated list of clients
 processCommand clients handle command = do
   let cl = clients `findByHandle` handle
+  hostname <- getHostName
   case cl of
     Nothing -> do
       debugInfo $ "Invalid client handle received!"
@@ -90,12 +91,26 @@ processCommand clients handle command = do
           openStream clients sender lang ver
         (Authenticate auths ident) -> do    -- trying to authenticate
           case auths of
-            (Nothing, _, _) -> invalidAuthQuery sender ident
-            (_, Nothing, _) -> invalidAuthQuery sender ident
-            (_, _, Nothing) -> invalidAuthQuery sender ident
-            (username, password, resource) ->
-              authQuery username password resource ident
+            (Nothing, _, _) -> do
+              invalidAuthQuery sender ident
+              return clients
+            (_, Nothing, _) -> do
+              invalidAuthQuery sender ident
+              return clients
+            (_, _, Nothing) -> do
+              invalidAuthQuery sender ident
+              return clients
+            validAuth@(Just username, Just password, Just resource) -> do
+              authQuery username password resource sender ident
+              return $ (clientAuthenticate sender validAuth hostname):
+                (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
+        (UnknownIqNamespace namespace ident) -> do
+          unknownIqNs sender namespace ident
           return clients
+        (SendRoster ident) -> do
+          sendClientRoster sender clients ident
+          return clients
+        --(Error str) -> sendToClient sender 
 --      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
 --      clients' <- forM clients $
 --        \(ch, h, state, jid) -> do
@@ -164,7 +179,76 @@ invalidAuthQuery sender ident = sendToClient sender $
       ]
     )
 
-authQuery username password resource ident = return ()
+
+authQuery :: String
+          -> String
+          -> String
+          -> Client
+          -> String
+          -> IO ()
+authQuery username password resource sender ident =
+  sendToClient sender $ serializeXmlNode $
+  (
+    "iq",
+    [
+      ("type", "result"),
+      ("id", ident)
+    ],
+    []
+  )
+
+
+unknownIqNs :: Client
+            -> String
+            -> String
+            -> IO ()
+unknownIqNs sender namespace ident =
+  sendToClient sender $ serializeXmlNode
+    (
+      "iq",
+      [
+        ("type", "error"),
+        ("id", ident)
+      ],
+      {-[
+        XmlContentNode
+          (
+            "query",
+            [
+              ("xmlns", namespace),
+              ("node", 
+      -}
+      []
+    )
+
+
+sendClientRoster :: Client
+                 -> [Client]
+                 -> String
+                 -> IO ()
+sendClientRoster sender clients ident = sendToClient sender $ serializeXmlNode
+  (
+    "iq",
+    [
+      ("type", "result"),
+      ("id", ident)
+    ],
+    allClients
+  )
+  where allClients = map XmlContentNode $ foldr (\x z -> (clientToRosterItem x):z) [] clients
+
+
+clientToRosterItem :: Client
+                   -> XmlNode
+clientToRosterItem client =
+  (
+    "item",
+    [
+      ("jid", showJIDNoResource (clientGetJID client)),
+      ("subscription", "both")
+    ],
+    []
+  )
 
 
 {-|

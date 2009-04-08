@@ -55,29 +55,43 @@ processIq prefix attrs chan elements = do
             (Just id) -> safely chan elements $
               (\x xs -> case x of
                 (SaxElementOpen name n_attrs) -> do   -- opening XML tag
-                  if (matchesStringForPrefix name "query" prefix) then do
-                    -- in case of IQ stanza query
-                      processAuthQuery prefix n_attrs chan xs ident
-                    else do
-                      sendCommand chan $ Error ("Unknown IQ stanza: " ++ name)
-                      return Nothing
+                  safelyWorkWithAttribute n_attrs chan "xmlns" $
+                    (\xmlns ->
+                      if (xmlns == authNamespace) then do
+                          -- in case the namespace does not match the authentication namespace
+                          remaining <- processAuthQuery name prefix chan xs ident
+                          case remaining of
+                            Nothing -> return Nothing
+                            (Just xss) -> do
+                              rem_no_iq <- consumeClosingTag prefix chan xss "iq"
+                              return rem_no_iq
+                        else if (xmlns == rosterNamespace) then do
+                          debugInfo $ "Huraaa roster"
+                          remaining <- consumeClosingTag prefix chan xs "iq"
+                          return remaining
+                        else do
+                          sendCommand chan $ UnknownIqNamespace xmlns ident
+                          remaining <- consumeClosingTag prefix chan xs "iq"
+                          return remaining
+                    )
                 (SaxElementTag name n_attrs) -> do    -- empty XML tag
-                  if (matchesStringForPrefix name "query" prefix) then do
-                    -- in case of empty IQ stanza query
-                      --
-                      -- TODO: check xml namespace!
-                      --
-                      sendCommand chan $ Authenticate initAuthStruct ident
-                      -- consume the remaining closing IQ tag
-                      rem_elements <- consumeClosingTag prefix chan xs "iq"
-                      case rem_elements of
-                        Nothing -> do            -- an error
-                          return Nothing
-                        (Just xss) -> do         -- everything allright
-                          return $ Just xss
-                    else do
-                      sendCommand chan $ Error ("Unknown IQ stanza: " ++ name)
-                      return Nothing
+                  safelyWorkWithAttribute n_attrs chan "xmlns" $
+                    (\xmlns ->
+                      if (xmlns == authNamespace) then do
+                          -- in case the namespace does not match the authentication namespace
+                          sendCommand chan $ Authenticate initAuthStruct ident
+                          rem_elements <- consumeClosingTag prefix chan xs "iq"
+                          return rem_elements
+                        else if (xmlns == rosterNamespace) then do
+                          debugInfo $ "Huraaa roster"
+                          sendCommand chan $ SendRoster ident
+                          remaining <- consumeClosingTag prefix chan xs "iq"
+                          return remaining
+                        else do
+                          sendCommand chan $ UnknownIqNamespace xmlns ident
+                          remaining <- consumeClosingTag prefix chan xs "iq"
+                          return remaining
+                    )
                 (SaxCharData _) -> do                   -- ignore CDATA
                   processIqWithId prefix attrs chan xs ident
                 _ -> do                                 -- other
@@ -92,28 +106,25 @@ processIq prefix attrs chan elements = do
   details.
  -}
 processAuthQuery :: String
-                 -> [Attribute]
+                 -> String
                  -> TChan Command
                  -> [Maybe SaxElement]
                  -> String
                  -> IO (Maybe [Maybe SaxElement])
-processAuthQuery prefix attrs chan elements ident =
-  safelyWorkWithAttribute attrs chan "xmlns" $
-    (\xmlns ->
-      if (xmlns /= authNamespace) then do
-          -- in case the namespace does not match the authentication namespace
-          sendCommand chan $ Error "Invalid namespace!"
-          return Nothing
-        else
-          processAuthQueryWithXmlns prefix chan elements ident initAuthStruct
-    )
-  where processAuthQueryWithXmlns :: String
+processAuthQuery name prefix chan elements ident =
+  if (matchesStringForPrefix name "query" prefix) then do
+    -- in case of IQ stanza query
+      processAuthQueryWithQuery prefix chan elements ident initAuthStruct
+    else do
+      sendCommand chan $ Error "Query tag expected!"
+      return Nothing
+  where processAuthQueryWithQuery :: String
                                   -> TChan Command
                                   -> [Maybe SaxElement]
                                   -> String
                                   -> AuthStruct
                                   -> IO (Maybe [Maybe SaxElement])
-        processAuthQueryWithXmlns prefix chan elements ident auths =
+        processAuthQueryWithQuery prefix chan elements ident auths =
           safely chan elements $
             (\x xs -> case x of
               (SaxElementOpen name new_attrs) -> do     -- opening XML tag
@@ -130,7 +141,7 @@ processAuthQuery prefix attrs chan elements ident =
                         case remaining of
                           Nothing -> return Nothing
                           (Just xsss) -> do
-                            rem_elements <- processAuthQueryWithXmlns prefix chan
+                            rem_elements <- processAuthQueryWithQuery prefix chan
                               xsss ident (auths `setUsername` str)
                             return rem_elements
                   else if (matchesStringForPrefix name "password" prefix) then do
@@ -142,9 +153,13 @@ processAuthQuery prefix attrs chan elements ident =
                           Error "The password tag has no CDATA contents!"
                         return Nothing
                       (Just (str, xss)) -> do           -- with CDATA contents
-                        rem_elements <- processAuthQueryWithXmlns prefix chan
-                          xss ident (auths `setPassword` str)
-                        return rem_elements
+                        remaining <- consumeClosingTag prefix chan xss "password"
+                        case remaining of
+                          Nothing -> return Nothing
+                          (Just xsss) -> do
+                            rem_elements <- processAuthQueryWithQuery prefix chan
+                              xsss ident (auths `setPassword` str)
+                            return rem_elements
                   else if (matchesStringForPrefix name "resource" prefix) then do
                     debugInfo $ "Resource"
                     strList <- stringPlusList xs
@@ -154,9 +169,13 @@ processAuthQuery prefix attrs chan elements ident =
                           Error "The resource tag has no CDATA contents!"
                         return Nothing
                       (Just (str, xss)) -> do           -- with CDATA contents
-                        rem_elements <- processAuthQueryWithXmlns prefix chan
-                          xss ident (auths `setResource` str)
-                        return rem_elements
+                        remaining <- consumeClosingTag prefix chan xss "resource"
+                        case remaining of
+                          Nothing -> return Nothing
+                          (Just xsss) -> do
+                            rem_elements <- processAuthQueryWithQuery prefix chan
+                              xsss ident (auths `setResource` str)
+                            return rem_elements
                   else do
                     sendCommand chan $
                       Error $ "Invalid tag in authentication query: " ++ name
@@ -177,7 +196,7 @@ processAuthQuery prefix attrs chan elements ident =
                 debugInfo $ "Empty tag: " ++ showSax x
                 return Nothing
               (SaxCharData _) -> do                     -- ignore CDATA
-                rem_elements <- processAuthQueryWithXmlns prefix chan xs ident auths
+                rem_elements <- processAuthQueryWithQuery prefix chan xs ident auths
                 return rem_elements
               _ -> do                                   -- other
                 debugInfo $ "Malformed stream!" ++ showSax x
@@ -201,30 +220,3 @@ emptyAuthQuery prefix chan elements ident = do
   sendCommand chan $ SendAuthFields ident
   return remaining_tags
 -}
-
-
-{-|
-  This function safely consumes the given tag.
- -}
-consumeClosingTag :: String                        -- ^ The stream prefix
-                  -> TChan Command                 -- ^ Channel for commands
-                  -> [Maybe SaxElement]            -- ^ List of SAX events
-                  -> String                        -- ^ Tag name
-                  -> IO (Maybe [Maybe SaxElement]) -- ^ The return value
-consumeClosingTag prefix chan elements tag =
-  safely chan elements $
-    (\x xs -> case x of
-      (SaxElementClose name) -> do    -- closing XML tag
-        if (matchesStringForPrefix name tag name) then
-            return $ Just xs
-          else do
-            debugInfo $ "Malformed stream!" ++ showSax x
-            sendCommand chan $ Error "Malformed stream!"
-            return $ Just xs
-      (SaxCharData _) -> do           -- ignore CDATA
-        consumeClosingTag prefix chan xs tag
-      _ -> do                         -- other
-        debugInfo $ "Malformed stream!" ++ showSax x
-        sendCommand chan $ Error "Malformed stream!"
-        return Nothing
-    )

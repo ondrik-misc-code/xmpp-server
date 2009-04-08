@@ -79,6 +79,12 @@ authNamespace = "jabber:iq:auth"
 
 
 {-|
+  The string constant with the namespace used for roster transport
+ -}
+rosterNamespace :: String             -- ^ The roster namespace
+rosterNamespace = "jabber:iq:roster"
+
+{-|
   The string constant with the SASL namespace
  -}
 saslNamespace :: String               -- ^ The SASL namespace
@@ -97,15 +103,20 @@ iqAuthNamespace = "http://jabber.org/features/iq-auth"
   command engine.
  -}
 data Command
-  = Error String                    -- ^ An error with description
-  | EndOfStream                     -- ^ End of client stream
-  | OpenStream String String        -- ^ Stream opening command. The parameters
-                                    --   are:
-                                    --     * the XML language
-                                    --     * the XMPP version
-  | Authenticate AuthStruct String  -- ^ Client authentication command with
-                                    --   the authentication structure and the
-                                    --   ID of the authentication request
+  = Error String                     -- ^ An error with description
+  | EndOfStream                      -- ^ End of client stream
+  | OpenStream String String         -- ^ Stream opening command. The parameters
+                                     --   are:
+                                     --     * the XML language
+                                     --     * the XMPP version
+  | Authenticate AuthStruct String   -- ^ Client authentication command with
+                                     --   the authentication structure and the
+                                     --   ID of the authentication request
+  | SendRoster String                -- ^ Send roster request with ID of the
+                                     --   request
+  | UnknownIqNamespace String String -- ^ Unknown IQ namespace command with
+                                     --     * the namespace
+                                     --     * the ID of the IQ stanza query
   deriving (Show)
 
 
@@ -119,6 +130,22 @@ data Command
      * The resource
  -}
 type JID = (String, String, String)
+
+
+{-|
+  The convertor of 'JID' into a 'String'.
+ -}
+showJID :: JID           -- ^ The 'JID'
+        -> String        -- ^ The string with the 'JID'
+showJID (node, domain, resource) = node ++ "@" ++ domain ++ "/" ++ resource
+
+
+{-|
+  The convertor of 'JID' into a 'String' without resource
+ -}
+showJIDNoResource :: JID     -- ^ The 'JID'
+                  -> String  -- ^ The string with the 'JID' without resource
+showJIDNoResource (node, domain, resource) = node ++ "@" ++ domain
 
 
 {-|
@@ -310,11 +337,35 @@ initClient command handle = (command, handle, Unauth, ("", "", ""))
 
 
 {-|
-  The accessor for handle field of a Client.
+  The accessor for handle field of a 'Client'.
  -}
 clientGetHandle :: Client    -- ^ The client
                 -> Handle    -- ^ The handle of the client
 clientGetHandle (_, handle, _, _) = handle
+
+
+{-|
+  The accessor for JID field of a 'Client'.
+ -}
+clientGetJID :: Client       -- ^ The client
+             -> JID          -- ^ The JID
+clientGetJID (_, _, _, jid) = jid
+
+
+{-|
+  This function authenticates a client and returns a 'Client' structure with
+  set 'JID'. Already authenticated clients are returned without change.
+ -}
+clientAuthenticate :: Client         -- ^ The input client
+                   -> AuthStruct     -- ^ The authentication structure
+                   -> String         -- ^ The domain of the client node
+                   -> Client         -- ^ Authenicated client
+clientAuthenticate client@(_, _, Auth, _) _ domain = client
+clientAuthenticate client (Nothing, _, _) domain = client
+clientAuthenticate client (_, Nothing, _) domain = client
+clientAuthenticate client (_, _, Nothing) domain = client
+clientAuthenticate (ch, h, Unauth, _) (Just node, _, Just resource) domain =
+  (ch, h, Auth, (node, domain, resource))
 
 
 {-|

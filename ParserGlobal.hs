@@ -18,8 +18,8 @@
   -}
 module ParserGlobal
   (showSax, sendCommand, getAttributeValue, getValueOfAttribute, safely,
-  safelyWorkWithAttribute, safelyGetContentString, matchesStringForPrefix)
-  where
+  safelyWorkWithAttribute, safelyGetContentString, matchesStringForPrefix,
+  consumeClosingTag, consumeTagsUpTo) where
 
 import Control.Concurrent.STM
   (TChan, writeTChan, atomically)
@@ -187,3 +187,53 @@ sendCommand :: TChan Command    -- ^ The command channel
             -> Command          -- ^ The command to be sent
             -> IO ()            -- ^ The return value
 sendCommand chan = atomically . writeTChan chan
+
+
+{-|
+  This function safely consumes the given tag.
+ -}
+consumeClosingTag :: String                        -- ^ The stream prefix
+                  -> TChan Command                 -- ^ Channel for commands
+                  -> [Maybe SaxElement]            -- ^ List of SAX events
+                  -> String                        -- ^ Tag name
+                  -> IO (Maybe [Maybe SaxElement]) -- ^ The return value
+consumeClosingTag prefix chan elements tag =
+  safely chan elements $
+    (\x xs -> case x of
+      (SaxElementClose name) -> do    -- closing XML tag
+        if (matchesStringForPrefix name tag name) then
+            return $ Just xs
+          else do
+            debugInfo $ "Malformed stream!" ++ showSax x
+            sendCommand chan $ Error "Malformed stream!"
+            return $ Just xs
+      (SaxCharData _) -> do           -- ignore CDATA
+        consumeClosingTag prefix chan xs tag
+      _ -> do                         -- other
+        debugInfo $ "Malformed stream!" ++ showSax x
+        sendCommand chan $ Error "Malformed stream!"
+        return Nothing
+    )
+
+
+consumeTagsUpTo :: String
+                -> TChan Command
+                -> [Maybe SaxElement]
+                -> String
+                -> IO (Maybe [Maybe SaxElement])
+consumeTagsUpTo prefix chan elements name =
+  safely chan elements $
+    (\x xs -> case x of
+      (SaxElementClose tagName) ->         -- closing tag
+        if (matchesStringForPrefix tagName name prefix) then do
+            debugInfo $ "Found!"
+            return $ Just xs
+          else do
+            debugInfo $ "Not found!"
+            remains <- consumeTagsUpTo prefix chan xs name
+            return remains
+      _ -> do                               -- other
+        debugInfo $ "Not found!"
+        remains <- consumeTagsUpTo prefix chan xs name
+        return remains
+    )
