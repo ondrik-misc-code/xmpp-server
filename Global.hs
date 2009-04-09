@@ -330,9 +330,50 @@ messageToElement :: Message      -- ^ The message
                  -> XmlNode      -- ^ The XML node representing the message
 messageToElement msg sender =
   (
-  -- TODO
-    "ahoj", [], []
+    "message",
+      ("from", (showJID . clientGetJID) sender):
+      target,
+    subject
+    ++ body
+    ++ thread
   )
+  where target :: [XmlAttribute]
+        target = case messageGetTarget msg of
+          Nothing -> []
+          (Just trg) -> ("to", trg):[]
+        subject :: [XmlContent]
+        subject = case messageGetSubject msg of
+          Nothing -> []
+          (Just subj) -> (XmlContentNode
+            (
+              "subject",
+              [],
+              [
+                XmlContentString subj
+              ]
+            )):[]
+        body :: [XmlContent]
+        body = case messageGetBody msg of
+          Nothing -> []
+          (Just bdy) -> (XmlContentNode
+            (
+              "body",
+              [],
+              [
+                XmlContentString bdy
+              ]
+            )):[]
+        thread :: [XmlContent]
+        thread = case messageGetThread msg of
+          Nothing -> []
+          (Just thr) -> XmlContentNode
+            (
+              "thread",
+              [],
+              [
+                XmlContentString thr
+              ]
+            ):[]
 
 
 {-|
@@ -439,6 +480,7 @@ serializeXmlContent :: XmlContent   -- ^ The XML content to be serialized
                     -> String       -- ^ The output string
 serializeXmlContent (XmlContentNode node) = serializeXmlNode node
 serializeXmlContent (XmlContentString str) = stringToXmlString str
+
 
 {-|
   This function converts a string into a valid XML string with proper escape

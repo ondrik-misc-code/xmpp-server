@@ -113,7 +113,7 @@ processCommand clients handle command = do
           sendClientRoster sender clients ident
           return clients
         (SendMessage message) -> do
-          sender `sendMessage` message
+          sendMessage sender clients message
           return clients
         --(Error str) -> sendToClient sender 
 --      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
@@ -302,8 +302,17 @@ sendMessage :: Client     -- ^ The sender
             -> [Client]   -- ^ A list of clients
             -> Message    -- ^ The message
             -> IO ()      -- ^ The return value
-sendMessage sender clients msg = sendToClient (clients `findClientByJID`
-  (messageGetTarget msg)) $ serializeXmlNode (messageToElement msg sender)
+sendMessage sender clients msg = case messageGetTarget msg of
+  Nothing -> return ()
+  (Just targetJID) ->
+    case clients `findClientByJID` targetJID of
+      Nothing -> do
+        debugInfo $ "Clients: " ++ (show $ map (showJID . clientGetJID) clients)
+        debugInfo $ "Client not found!"
+        return ()
+      (Just target) -> do
+        debugInfo $ "Client found!"
+        sendToClient target $ serializeXmlNode (messageToElement msg sender)
 
 
 {-|
