@@ -124,7 +124,7 @@ processAuthQuery name prefix chan elements ident =
               (SaxElementOpen n_name _) -> do           -- opening XML tag
                 if (matchesStringForPrefix n_name "username" pref) then do
                     debugInfo $ "Username"
-                    strList <- stringPlusList xs
+                    strList <- stringPlusList ch xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
                         sendCommand ch $
@@ -138,9 +138,9 @@ processAuthQuery name prefix chan elements ident =
                             rem_elements <- processAuthQueryWithQuery pref ch
                               xsss iden (auths `setUsername` str)
                             return rem_elements
-                  else if (matchesStringForPrefix name "password" pref) then do
+                  else if (matchesStringForPrefix n_name "password" pref) then do
                     debugInfo $ "Password"
-                    strList <- stringPlusList xs
+                    strList <- stringPlusList ch xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
                         sendCommand ch $
@@ -154,9 +154,9 @@ processAuthQuery name prefix chan elements ident =
                             rem_elements <- processAuthQueryWithQuery pref ch
                               xsss iden (auths `setPassword` str)
                             return rem_elements
-                  else if (matchesStringForPrefix name "resource" pref) then do
+                  else if (matchesStringForPrefix n_name "resource" pref) then do
                     debugInfo $ "Resource"
-                    strList <- stringPlusList xs
+                    strList <- stringPlusList ch xs
                     case (strList) of
                       Nothing -> do                     -- no CDATA contents
                         sendCommand ch $
@@ -197,9 +197,6 @@ processAuthQuery name prefix chan elements ident =
                 sendCommand ch $ Error "Malformed stream!"
                 return Nothing
             )
-          where stringPlusList :: [Maybe SaxElement]
-                               -> IO (Maybe (String, [Maybe SaxElement]))
-                stringPlusList elms = safelyGetContentString ch elms
 
 
 {-

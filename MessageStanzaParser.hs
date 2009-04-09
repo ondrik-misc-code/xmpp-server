@@ -42,7 +42,14 @@ processMessage :: String              -- ^ The prefix of the stream namespace
                -> IO (Maybe [Maybe SaxElement])
                -- ^ The return value
 processMessage prefix attrs chan elements =
-  processMessageWithMsg prefix chan elements initMessage
+  case getValueOfAttribute attrs "to" of
+    Nothing -> do
+      rem_elements <- processMessageWithMsg prefix chan elements initMessage
+      return rem_elements
+    (Just target) -> do
+      rem_elements <- processMessageWithMsg prefix chan elements $
+        messageSetTarget initMessage target
+      return rem_elements
   where
     processMessageWithMsg :: String
                           -> TChan Command
@@ -50,32 +57,79 @@ processMessage prefix attrs chan elements =
                           -> Message
                           -> IO (Maybe [Maybe SaxElement])
     processMessageWithMsg pref ch elems msg =
-      safely chan elements $
+      safely ch elems $
         (\x xs -> case x of
           (SaxElementOpen name n_attrs) ->                      -- opening tag
             if (matchesStringForPrefix name "subject" prefix) then do
-                --neco
-                return $ Just xs
+                debugInfo $ "Subject"
+                strList <- stringPlusList ch xs
+                case (strList) of
+                  Nothing -> do                     -- no CDATA contents
+                    sendCommand ch $
+                      Error "The subject tag has no CDATA contents!"
+                    return Nothing
+                  (Just (str, xss)) -> do           -- with CDATA contents
+                    remaining <- consumeClosingTag pref ch xss "subject"
+                    case remaining of
+                      Nothing -> return Nothing
+                      (Just xsss) -> do
+                        rem_elements <- processMessageWithMsg pref ch xsss
+                          (msg `messageSetSubject` str)
+                        return rem_elements
               else if (matchesStringForPrefix name "body" prefix) then do
-                --neco
-                return $ Just xs
+                debugInfo $ "Body"
+                strList <- stringPlusList ch xs
+                case (strList) of
+                  Nothing -> do                     -- no CDATA contents
+                    sendCommand ch $
+                      Error "The body tag has no CDATA contents!"
+                    return Nothing
+                  (Just (str, xss)) -> do           -- with CDATA contents
+                    remaining <- consumeClosingTag pref ch xss "body"
+                    case remaining of
+                      Nothing -> return Nothing
+                      (Just xsss) -> do
+                        rem_elements <- processMessageWithMsg pref ch xsss
+                          (msg `messageSetBody` str)
+                        return rem_elements
               else if (matchesStringForPrefix name "thread" prefix) then do
-                --neco
-                return $ Just xs
+                debugInfo $ "Thread"
+                strList <- stringPlusList ch xs
+                case (strList) of
+                  Nothing -> do                     -- no CDATA contents
+                    sendCommand ch $
+                      Error "The subject tag has no CDATA contents!"
+                    return Nothing
+                  (Just (str, xss)) -> do           -- with CDATA contents
+                    remaining <- consumeClosingTag pref ch xss "thread"
+                    case remaining of
+                      Nothing -> return Nothing
+                      (Just xsss) -> do
+                        rem_elements <- processMessageWithMsg pref ch xsss
+                          (msg `messageSetThread` str)
+                        return rem_elements
               else do
+                debugInfo $ "Unexpected tag: " ++ name
                 remains <- consumeTagsUpTo prefix chan xs name
-                return remains
+                case remains of
+                  Nothing -> return Nothing
+                  (Just xss) -> do
+                    rem_elems <- processMessageWithMsg prefix chan xss msg
+                    return rem_elems
           (SaxElementTag name n_attrs) ->                       -- empty tag
-            processMessage prefix attrs chan xs
+            processMessageWithMsg prefix chan xs msg
           (SaxElementClose name) ->                             -- closing tag
             if (matchesStringForPrefix name "message" prefix) then do
+                debugInfo $ "Closing " ++ name ++ " tag!"
                 sendCommand chan $ SendMessage msg
                 return $ Just xs
               else do
                 sendCommand chan $ Error $ "Invalid closing tag: " ++ name
                 return Nothing
-          (SaxCharData _) ->                                    -- ignore CDATA
-            processMessage prefix attrs chan xs
+          (SaxCharData _) -> do                                 -- ignore CDATA
+            debugInfo $ "ignoring CDATA"
+            rem_elements <- processMessageWithMsg prefix chan xs msg
+            return rem_elements
           _ -> do                                               -- other
             sendCommand chan $ Error "Invalid tag at message processing!"
             return Nothing

@@ -165,6 +165,30 @@ showJIDNoResource (node, domain, resource) = node ++ "@" ++ domain
 
 
 {-|
+  This function retrieves the node from a 'JID' structure.
+ -}
+jidGetNode :: JID      -- ^ The JID
+           -> String   -- ^ The node
+jidGetNode (node, _, _) = node
+
+
+{-|
+  This function retrieves the domain from a 'JID' structure.
+ -}
+jidGetDomain :: JID      -- ^ The JID
+             -> String   -- ^ The domain
+jidGetDomain (_, domain, _) = domain
+
+
+{-|
+  This function retrieves the resouce from a 'JID' structure.
+ -}
+jidGetResource :: JID      -- ^ The JID
+               -> String   -- ^ The resource
+jidGetResource (_, _, resource) = resource
+
+
+{-|
   The authentication structure
      * The name
      * The password
@@ -224,6 +248,91 @@ type Message = (Maybe String, Maybe String, Maybe String, Maybe String)
  -}
 initMessage :: Message      -- ^ An initialized 'Message' structure
 initMessage = (Nothing, Nothing, Nothing, Nothing)
+
+
+{-|
+  This is the accessor for target of a 'Message' data type.
+ -}
+messageGetTarget :: Message         -- ^ The message
+                 -> Maybe String    -- ^ The target
+messageGetTarget (target, _, _, _) = target
+
+
+{-|
+  This is the accessor for subject of a 'Message' data type.
+ -}
+messageGetSubject :: Message         -- ^ The message
+                  -> Maybe String    -- ^ The subject
+messageGetSubject (_, subject, _, _) = subject
+
+
+{-|
+  This is the accessor for body of a 'Message' data type.
+ -}
+messageGetBody :: Message         -- ^ The message
+               -> Maybe String    -- ^ The body
+messageGetBody (_, _, body, _) = body
+
+
+{-|
+  This is the accessor for thread of a 'Message' data type.
+ -}
+messageGetThread :: Message         -- ^ The message
+                 -> Maybe String    -- ^ The thread
+messageGetThread (_, _, _, thread) = thread
+
+
+{-|
+  The function that sets the target of a 'Message' structure.
+ -}
+messageSetTarget :: Message    -- ^ The input message
+                 -> String     -- ^ The target of the message
+                 -> Message    -- ^ The output message
+messageSetTarget (_, subject, body, thread) target =
+  (Just target, subject, body, thread)
+
+
+{-|
+  The function that sets the subject of a 'Message' structure.
+ -}
+messageSetSubject :: Message    -- ^ The input message
+                  -> String     -- ^ The subject of the message
+                  -> Message    -- ^ The output message
+messageSetSubject (target, _, body, thread) subject =
+  (target, Just subject, body, thread)
+
+
+{-|
+  The function that sets the body of a 'Message' structure.
+ -}
+messageSetBody :: Message       -- ^ The input message
+               -> String        -- ^ The body of the message
+               -> Message       -- ^ The output message
+messageSetBody (target, subject, _, thread) body =
+  (target, subject, Just body, thread)
+
+
+{-|
+  The function that sets the thread of a 'Message' structure.
+ -}
+messageSetThread :: Message     -- ^ The input message
+                 -> String      -- ^ The thread of the message
+                 -> Message     -- ^ The output message
+messageSetThread (target, subject, body, _) thread =
+  (target, subject, body, Just thread)
+
+
+{-|
+  This function transforms a message into an XML element.
+ -}
+messageToElement :: Message      -- ^ The message
+                 -> Client       -- ^ The sender of the message
+                 -> XmlNode      -- ^ The XML node representing the message
+messageToElement msg sender =
+  (
+  -- TODO
+    "ahoj", [], []
+  )
 
 
 {-|
@@ -405,6 +514,31 @@ clientIsAuth :: Client     -- ^ The client
              -> Bool       -- ^ Is the client authenticated?
 clientIsAuth (_, _, Unauth, _) = False
 clientIsAuth (_, _, Auth, _) = True
+
+
+{-|
+  This function finds a client in a list of clients according to the JID of
+  the client. If not found, Nothing is returned.
+ -}
+findClientByJID :: [Client]       -- ^ List of clients
+                -> String         -- ^ JID of the sought client
+                -> Maybe Client   -- ^ The client or Nothing
+findClientByJID [] _ = Nothing
+findClientByJID (x:xs) jid = if (x `clientMatchesJID` jid)
+                               then Just x
+                               else findClientByJID xs jid
+
+
+{-|
+  This function determines whether a client can be addressed by given JID.
+ -}
+clientMatchesJID :: Client   -- ^ The client
+                 -> String   -- ^ The JID
+                 -> Bool     -- ^ Can the client be matched by the JID?
+clientMatchesJID client jid = (jidGetNode clientJID, jidGetDomain clientJID) ==  (\(x, y) -> (x, if (null y) then y else tail y))
+  (span (/= '@') $ takeWhile (/= '/') jid)
+  where clientJID = clientGetJID client
+
 
 {-|
   This function transforms a client into a roster item that represents the

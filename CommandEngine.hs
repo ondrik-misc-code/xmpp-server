@@ -112,6 +112,9 @@ processCommand clients handle command = do
         (SendRoster ident) -> do
           sendClientRoster sender clients ident
           return clients
+        (SendMessage message) -> do
+          sender `sendMessage` message
+          return clients
         --(Error str) -> sendToClient sender 
 --      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
 --      clients' <- forM clients $
@@ -290,6 +293,17 @@ createPresenceFor sender target =
     ],
     []
   )
+
+
+{-|
+  This function sends given message from a client.
+ -}
+sendMessage :: Client     -- ^ The sender
+            -> [Client]   -- ^ A list of clients
+            -> Message    -- ^ The message
+            -> IO ()      -- ^ The return value
+sendMessage sender clients msg = sendToClient (clients `findClientByJID`
+  (messageGetTarget msg)) $ serializeXmlNode (messageToElement msg sender)
 
 
 {-|

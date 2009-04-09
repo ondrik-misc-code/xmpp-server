@@ -19,7 +19,7 @@
 module ParserGlobal
   (showSax, sendCommand, getAttributeValue, getValueOfAttribute, safely,
   safelyWorkWithAttribute, safelyGetContentString, matchesStringForPrefix,
-  consumeClosingTag, consumeTagsUpTo) where
+  consumeClosingTag, consumeTagsUpTo, stringPlusList) where
 
 import Control.Concurrent.STM
   (TChan, writeTChan, atomically)
@@ -163,6 +163,17 @@ safelyGetContentString chan elements =
       (SaxCharData str) -> return $ Just (str, xs)     -- CDATA
       _ -> return Nothing                              -- other
     )
+
+
+{-|
+  This function retrieves a string from the head element of a list of SAX
+  events and returns it (or return Nothing in case it is not there.
+ -}
+stringPlusList :: TChan Command        -- ^ The channel for sending commands
+               -> [Maybe SaxElement]   -- ^ List of SAX events
+               -> IO (Maybe (String, [Maybe SaxElement]))
+               -- ^ The return value
+stringPlusList chan elms = safelyGetContentString chan elms
 
 
 {-|
