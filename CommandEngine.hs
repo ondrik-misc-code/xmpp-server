@@ -20,6 +20,8 @@
  -}
 module CommandEngine (processCommand) where
 
+import Prelude
+  hiding (catch)
 import Random
   (getStdRandom, random)
 import System.Posix.Time
@@ -30,6 +32,8 @@ import System.IO
   (Handle, hPutStrLn, hFlush, hClose)
 import Control.Monad
   (forM, when)
+import Control.Exception
+  (finally, {--}catch{--})
 
 import Global
 
@@ -115,6 +119,16 @@ processCommand clients handle command = do
         (SendMessage message) -> do
           sendMessage sender clients message
           return clients
+        EndOfStream -> do
+          debugInfo $ "Ending stream at handle " ++ (show $ clientGetHandle sender)
+          sendToClient sender $ serializeXmlNodeClosingTag
+            (
+              "stream:stream",
+              [],
+              []
+            )
+          hClose $ clientGetHandle sender
+          return (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
         --(Error str) -> sendToClient sender 
 --      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
 --      clients' <- forM clients $
@@ -322,10 +336,13 @@ sendMessage sender clients msg = case messageGetTarget msg of
 sendToClient :: Client     -- ^ The target of the data
              -> String     -- ^ The data
              -> IO ()      -- ^ The return value
-sendToClient client str = do
-  debugInfo $ "Sending to client at (" ++ show (clientGetHandle client) ++  "): " ++ str
-  hPutStrLn (clientGetHandle client) str
-  hFlush (clientGetHandle client)
+sendToClient client str =
+  (sendToClientNotHandled client str) `catch` (const $ return ())
+  where sendToClientNotHandled cl s = do
+          debugInfo $ "Sending to client at ("
+            ++ show (clientGetHandle client) ++  "): " ++ str
+          hPutStrLn (clientGetHandle client) str
+          hFlush (clientGetHandle client)
 
 
 {-|

@@ -26,11 +26,11 @@ import Prelude
 import Network
   (listenOn, accept, sClose, Socket, withSocketsDo, PortID(..))
 import System.IO
-  (Handle, hGetContents, hSetBuffering, stderr, stdout, BufferMode(..))
+  (Handle, hGetContents, hClose, hSetBuffering, stderr, stdout, BufferMode(..))
 import System.Environment
   (getArgs, getProgName)
 import Control.Exception
-  (finally, {-catch-})
+  (finally, {--}catch{--})
 import Control.Concurrent
   (forkIO)
 import Control.Concurrent.STM
@@ -151,8 +151,9 @@ processClient handle chan = do
 -- This code was commented out because it was responsible for closing the
 -- socket before the server could respond. The socket should be closed
 -- explicitly by CommandEngine
---    `catch` (const $ return ())  -- in case of an exception, return
---    `finally` hClose handle      -- when ending, close the socket 
+    `catch` (const $ return ())  -- in case of an exception, return
+    `finally` hClose handle      -- when ending, close the socket 
+  debugInfo $ "Client processing has finished"
 
 
 --showBuffering NoBuffering = "NoBuffering"
