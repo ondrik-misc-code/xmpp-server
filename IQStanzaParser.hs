@@ -61,7 +61,7 @@ processIq prefix attrs chan elements = do
                             return rem_no_iq
                       else if (xmlns == rosterNamespace) then do
                         sendCommand ch $ SendRoster ident
-                        remaining <- consumeClosingTag pref ch xs "iq"
+                        remaining <- consumeTagsUpTo pref ch xs "iq"
                         return remaining
                       else do
                         sendCommand ch $ UnknownIqNamespace xmlns ident

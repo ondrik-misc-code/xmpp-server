@@ -59,7 +59,7 @@ processMessage prefix attrs chan elements =
     processMessageWithMsg pref ch elems msg =
       safely ch elems $
         (\x xs -> case x of
-          (SaxElementOpen name n_attrs) ->                      -- opening tag
+          (SaxElementOpen name _) ->                -- opening tag
             if (matchesStringForPrefix name "subject" prefix) then do
                 debugInfo $ "Subject"
                 strList <- stringPlusList ch xs
@@ -116,8 +116,9 @@ processMessage prefix attrs chan elements =
                   (Just xss) -> do
                     rem_elems <- processMessageWithMsg prefix chan xss msg
                     return rem_elems
-          (SaxElementTag name n_attrs) ->                       -- empty tag
-            processMessageWithMsg prefix chan xs msg
+          (SaxElementTag _ _) -> do                             -- empty tag
+             rem_elems <- processMessageWithMsg prefix chan xs msg
+             return rem_elems
           (SaxElementClose name) ->                             -- closing tag
             if (matchesStringForPrefix name "message" prefix) then do
                 debugInfo $ "Closing " ++ name ++ " tag!"

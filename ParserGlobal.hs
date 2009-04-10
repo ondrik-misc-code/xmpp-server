@@ -187,6 +187,15 @@ cropQuotes (x:xs) = if (x == '\"') then cropEnd xs else x:(cropEnd xs)
   where cropEnd = foldr (\y z -> if (z == "\"") then [y] else (y:z)) ""
 
 
+{-|
+  This function determines whether a string matches another string with the
+  possibility of having a given prefix.
+ -}
+matchesStringForPrefix :: String      -- ^ The string that is to be determined
+                       -> String      -- ^ The string to which the first
+                                      -- ^ string is to be matched
+                       -> String      -- ^ The prefix
+                       -> Bool        -- ^ Do the strings match?
 matchesStringForPrefix str target prefix =
   (str == target) || (str == prefix ++ ":" ++ target)
 

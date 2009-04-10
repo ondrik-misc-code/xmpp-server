@@ -21,7 +21,7 @@ module Global where
 import Data.List
   (foldl')
 import System.IO
-  (Handle, hPutStrLn, stderr)
+  (Handle, hPutStrLn, stderr, hFlush)
 import Control.Concurrent.STM
   (TChan)
 import Control.Monad
@@ -133,6 +133,11 @@ data Command
                                      --     * the ID of the IQ stanza query
   | SendMessage Message              -- ^ Client send message command with
                                      --   the message
+  | SendPresence (Maybe String)      -- ^ Client presence stanza with a type
+                                     --   (or Nothing)
+  | AuthorizeSubscription String     -- ^ Client presence stanza with
+                                     --   authorization of a node in the first
+                                     --   parameter
   deriving (Show)
 
 
@@ -161,7 +166,7 @@ showJID (node, domain, resource) = node ++ "@" ++ domain ++ "/" ++ resource
  -}
 showJIDNoResource :: JID     -- ^ The 'JID'
                   -> String  -- ^ The string with the 'JID' without resource
-showJIDNoResource (node, domain, resource) = node ++ "@" ++ domain
+showJIDNoResource (node, domain, _) = node ++ "@" ++ domain
 
 
 {-|
@@ -541,10 +546,10 @@ clientAuthenticate :: Client         -- ^ The input client
                    -> AuthStruct     -- ^ The authentication structure
                    -> String         -- ^ The domain of the client node
                    -> Client         -- ^ Authenicated client
-clientAuthenticate client@(_, _, Auth, _) _ domain = client
-clientAuthenticate client (Nothing, _, _) domain = client
-clientAuthenticate client (_, Nothing, _) domain = client
-clientAuthenticate client (_, _, Nothing) domain = client
+clientAuthenticate client@(_, _, Auth, _) _ _ = client
+clientAuthenticate client (Nothing, _, _) _ = client
+clientAuthenticate client (_, Nothing, _) _ = client
+clientAuthenticate client (_, _, Nothing) _ = client
 clientAuthenticate (ch, h, Unauth, _) (Just node, _, Just resource) domain =
   (ch, h, Auth, (node, domain, resource))
 
@@ -593,7 +598,8 @@ clientToRosterItem client =
     "item",
     [
       ("jid", showJIDNoResource (clientGetJID client)),
-      ("subscription", "both")
+      ("subscription", "both"),
+      ("subscribed", "")
     ],
     []
   )
@@ -604,9 +610,4 @@ clientToRosterItem client =
  -}
 debugInfo :: String      -- ^ The string to be printed
           -> IO ()       -- ^ The return value
-debugInfo str = when (debug) $ hPutStrLn stderr str
---debugInfo [] = hPutStr stderr "\n"
---debugInfo (x:xs) = when (debug) $ do
---  hPutStr stderr [x]
---  hFlush stderr
---  debugInfo xs
+debugInfo str = (when (debug) $ hPutStrLn stderr str) >> hFlush stderr

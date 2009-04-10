@@ -30,30 +30,28 @@ import Network.BSD
   (getHostName)
 import System.IO
   (Handle, hPutStrLn, hFlush, hClose)
-import Control.Monad
-  (forM, when)
 import Control.Exception
-  (finally, {--}catch{--})
+  (catch)
 
 import Global
 
 
 streamFeatures :: XmlNode
 streamFeatures = ("stream:features", [], [{-mechanisms,-} auth])
-  where mechanisms :: XmlContent
-        mechanisms = XmlContentNode
-          (
-            "mechanisms",
-            [("xmlns", saslNamespace)],
-            [XmlContentNode ("mechanism", [], [XmlContentString "PLAIN"])]
-          )
-        auth :: XmlContent
+  where auth :: XmlContent
         auth = XmlContentNode
           (
             "auth",
             [("xmlns", iqAuthNamespace)],
             []
           )
+--        mechanisms :: XmlContent
+--        mechanisms = XmlContentNode
+--          (
+--            "mechanisms",
+--            [("xmlns", saslNamespace)],
+--            [XmlContentNode ("mechanism", [], [XmlContentString "PLAIN"])]
+--          )
 
 
 authenticationFields :: XmlNode
@@ -107,7 +105,8 @@ processCommand clients handle command = do
             validAuth@(Just username, Just password, Just resource) -> do
               authQuery username password resource sender ident
               let new_client = clientAuthenticate sender validAuth hostname
-              sendClientPresence new_client clients
+              sendClientPresence new_client clients $ Just "subscribed"
+              sendPresenceOfClients clients new_client $ Just "subscribed"
               return $ new_client:
                 (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
         (UnknownIqNamespace namespace ident) -> do
@@ -119,6 +118,14 @@ processCommand clients handle command = do
         (SendMessage message) -> do
           sendMessage sender clients message
           return clients
+        (SendPresence typ) -> do
+          debugInfo $ "Sending presence: " ++ show typ
+          sendClientPresence sender clients typ
+          return clients
+        (AuthorizeSubscription target) -> do
+          debugInfo $ "Authorizing subscription of " ++ target
+          sender `sendAuthorizationOf` target
+          return clients
         EndOfStream -> do
           debugInfo $ "Ending stream at handle " ++ (show $ clientGetHandle sender)
           sendToClient sender $ serializeXmlNodeClosingTag
@@ -129,18 +136,17 @@ processCommand clients handle command = do
             )
           hClose $ clientGetHandle sender
           return (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
-        --(Error str) -> sendToClient sender 
---      hPutStr clientHandle "<stream:stream xmlns:stream=" ++ streamNamespace
---      clients' <- forM clients $
---        \(ch, h, state, jid) -> do
---          hPutStrLn h (show command)
---          hFlush h
---          return [(ch, h, state, jid)]
---          `catch` const (hClose h >> return [])
---      let dropped = length $ filter null clients'
---      when (dropped > 0) $
---        debugInfo $ "clients lost: " ++ show dropped
---      return $ concat clients'
+        (Error str) -> do
+          debugInfo $ "Detected error, ending stream at handle "
+            ++ (show $ clientGetHandle sender) ++ ", message: " ++ str
+          sendToClient sender $ serializeXmlNodeClosingTag
+            (
+              "stream:stream",
+              [],
+              []
+            )
+          hClose $ clientGetHandle sender
+          return (filter ((/= clientGetHandle sender) . clientGetHandle) clients)
 
 
 openStream :: [Client]
@@ -153,11 +159,11 @@ openStream clients sender lang version = do
   time <- epochTime
   randomPart <- (getStdRandom random) :: IO Int
   --
-  -- TODO: digest the ID (SHA, MD5, CRC, ...)
+  -- TODO: hash the ID (SHA, MD5, CRC, ...)
   -- note: this needs a library "http://www.haskell.org/crypto/" to be
   -- installed, is it necessary?
   --
-  let id = show time ++ (show . abs) randomPart
+  let ident = show time ++ (show . abs) randomPart
   -- send DTD
   sendToClient sender $ xmlDtd
   -- send stream opening tag
@@ -167,7 +173,7 @@ openStream clients sender lang version = do
       ("xmlns", clientNamespace),
       ("xmlns:stream", streamNamespace),
       ("from", hostname),
-      ("id", id),
+      ("id", ident),
       ("xml:lang", lang),
       ("version", version)
     ],
@@ -199,13 +205,16 @@ invalidAuthQuery sender ident = sendToClient sender $
     )
 
 
-authQuery :: String
-          -> String
-          -> String
-          -> Client
-          -> String
-          -> IO ()
-authQuery username password resource sender ident =
+{-|
+  The function for processing of authentication query.
+ -}
+authQuery :: String   -- ^ The client username
+          -> String   -- ^ The client password
+          -> String   -- ^ The client resource
+          -> Client   -- ^ The sender
+          -> String   -- ^ The identifier of the IQ stanza
+          -> IO ()    -- ^ The return value
+authQuery _ _ _ sender ident =
   sendToClient sender $ serializeXmlNode $
   (
     "iq",
@@ -217,10 +226,13 @@ authQuery username password resource sender ident =
   )
 
 
-unknownIqNs :: Client
-            -> String
-            -> String
-            -> IO ()
+{-|
+  This function handles unknown IQ stanza namespaces.
+ -}
+unknownIqNs :: Client   -- ^ The sender of the IQ stanza
+            -> String   -- ^ The namespace name
+            -> String   -- ^ The identifier of the IQ stanza
+            -> IO ()    -- ^ The return value
 unknownIqNs sender namespace ident =
   sendToClient sender $ serializeXmlNode
     (
@@ -260,10 +272,13 @@ unknownIqNs sender namespace ident =
     )
 
 
-sendClientRoster :: Client
-                 -> [Client]
-                 -> String
-                 -> IO ()
+{-|
+  This function sends a roster to a client.
+ -}
+sendClientRoster :: Client     -- ^ The receiver of the roster
+                 -> [Client]   -- ^ List of connected clients
+                 -> String     -- ^ The identifier of the query IQ stanza
+                 -> IO ()      -- ^ The return value
 sendClientRoster sender clients ident = sendToClient sender $ serializeXmlNode
   (
     "iq",
@@ -283,10 +298,11 @@ sendClientRoster sender clients ident = sendToClient sender $ serializeXmlNode
 sendClientPresence :: Client        -- ^ The input client
                    -> [Client]      -- ^ The list of target clients of the
                                     --   presence message
+                   -> Maybe String  -- ^ The type of presence (or Nothing)
                    -> IO ()         -- ^ The return value
-sendClientPresence newClient clients =
+sendClientPresence newClient clients typ =
   foldr (\x z -> sendToClient x (serializeXmlNode $
-    newClient `createPresenceFor` x) >>= return z) (return ()) authClients
+    createPresenceFor newClient x typ) >>= return z) (return ()) authClients
   where authClients = filter clientIsAuth clients
 
 
@@ -294,16 +310,48 @@ sendClientPresence newClient clients =
   The function to create a presence XML node from a source client to a target
   client.
  -}
-createPresenceFor :: Client     -- ^ The source client
-                  -> Client     -- ^ The target client
-                  -> XmlNode    -- ^ The presence XML node
-createPresenceFor sender target =
+createPresenceFor :: Client       -- ^ The source client
+                  -> Client       -- ^ The target client
+                  -> Maybe String -- ^ The type of presence
+                  -> XmlNode      -- ^ The presence XML node
+createPresenceFor sender target typ =
   (
     "presence",
     [
       ("from", showJID $ clientGetJID sender),
-      ("to", showJIDNoResource $ clientGetJID target),
-      ("type", "probe")
+      ("to", showJIDNoResource $ clientGetJID target)
+    ] ++ typAttr,
+    []
+  )
+  where typAttr = case typ of
+          Nothing -> []
+          (Just typp) -> [("type", typp)]
+
+
+{-|
+  This function sends to a client presence of a list of clients of given type.
+ -}
+sendPresenceOfClients :: [Client]       -- ^ The list of clients
+                      -> Client         -- ^ The target
+                      -> Maybe String   -- ^ The type of presence of Nothing
+                      -> IO ()          -- ^ The return value
+sendPresenceOfClients clients target typ =
+  foldr (\x _ -> sendToClient target $ serializeXmlNode x) (return ()) $
+    map (\x -> createPresenceFor x target typ) clients
+
+
+{-|
+  This function sends an authorization message of a node to a client.
+ -}
+sendAuthorizationOf :: Client        -- ^ The authorization requester
+                    -> String        -- ^ The node to be authorized
+                    -> IO ()         -- ^ The return value
+sendAuthorizationOf sender target = sendToClient sender $ serializeXmlNode
+  (
+    "presence",
+    [
+      ("from", target),
+      ("type", "subscribed")
     ],
     []
   )
@@ -340,9 +388,9 @@ sendToClient client str =
   (sendToClientNotHandled client str) `catch` (const $ return ())
   where sendToClientNotHandled cl s = do
           debugInfo $ "Sending to client at ("
-            ++ show (clientGetHandle client) ++  "): " ++ str
-          hPutStrLn (clientGetHandle client) str
-          hFlush (clientGetHandle client)
+            ++ show (clientGetHandle cl) ++  "): " ++ s
+          hPutStrLn (clientGetHandle cl) s
+          hFlush (clientGetHandle cl)
 
 
 {-|

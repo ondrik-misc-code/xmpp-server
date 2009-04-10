@@ -29,6 +29,9 @@ import System.IO
   (Handle, hGetContents, hClose, hSetBuffering, stderr, stdout, BufferMode(..))
 import System.Environment
   (getArgs, getProgName)
+import System.Posix.Signals
+  (installHandler, emptySignalSet, addSignal, sigINT, sigQUIT, sigTERM,
+  sigABRT, sigHUP, Handler(..), SignalSet)
 import Control.Exception
   (finally, {--}catch{--})
 import Control.Concurrent
@@ -109,20 +112,32 @@ startServer :: Socket        -- ^ The socket the server will be listening on
 startServer servSock = do
   -- create a communication channel
   acceptChan <- atomically newTChan
+  -- install handler for various signals
+  installHandler sigINT (Catch $ handler acceptChan) $ Just handledSignals
   -- create a new thread for accepting connections
   forkIO $ acceptLoop servSock acceptChan
   -- go to the command processing loop
   commandLoop acceptChan []
+  where handledSignals :: SignalSet
+        handledSignals = foldr addSignal emptySignalSet
+          [sigTERM, sigABRT, sigHUP, sigQUIT]
+        handler :: TChan (Maybe Client)
+                -> IO ()
+        handler chan = do
+          debugInfo $ "Terminating the program..."
+          atomically $ writeTChan chan Nothing
 
 
 {-|
   The 'acceptLoop' function runs in a loop and accepts new incoming
   connections.
  -}
-acceptLoop :: Socket         -- ^ The socket the loop will be listening on
-           -> TChan Client   -- ^ The channel that is used to send new client
-                             --   connection parameters to the global handler
-           -> IO ()          -- ^ The return value
+acceptLoop :: Socket                 -- ^ The socket the accept loop will be
+                                     --   listening on
+           -> TChan (Maybe Client)   -- ^ The channel that is used to send
+                                     --   new client connection parameters
+                                     --   to the global handler
+           -> IO ()                  -- ^ The return value
 acceptLoop servSock chan = do
   -- accept an incoming connection
   (cHandle, host, port) <- accept servSock
@@ -134,7 +149,7 @@ acceptLoop servSock chan = do
   -- create a new thread for processing the connected client
   forkIO $ processClient cHandle cChan
   -- send the client communication channel to the main loop
-  atomically $ writeTChan chan $ initClient cChan cHandle
+  atomically $ writeTChan chan $ Just $ initClient cChan cHandle
   -- start the loop that accepts new clients' connections
   acceptLoop servSock chan
 
@@ -169,13 +184,13 @@ processClient handle chan = do
   The 'commandLoop' function receives commands from the client handling treads
   and executes proper actions depending on the commands.
  -}
-commandLoop :: TChan Client  -- ^ The channel that the newly connected clients
-                             --   information comes from
-            -> [Client]      -- ^ The list of information about clients
-                             --   ('Client' structures) connected to the
-                             --   server, including a channel for every
-                             --   client's connection
-            -> IO ()         -- ^ The return value
+commandLoop :: TChan (Maybe Client)  -- ^ The channel that the newly connected
+                                     --   clients information comes from
+            -> [Client]              -- ^ The list of information about clients
+                                     --   ('Client' structures) connected to the
+                                     --   server, including a channel for every
+                                     --   client's connection
+            -> IO ()                 -- ^ The return value
 commandLoop acceptChan clients = do
   -- try to read from the channel for newly connected clients' information,
   -- in case it cannot read, try reading from all connected clients' channels
@@ -185,13 +200,25 @@ commandLoop acceptChan clients = do
   -- choose according to what was read in the previous step
   case recv_data of
     -- if a new client connected
-    Left new_client -> do
-      debugInfo $ "new client at " ++ show (clientGetHandle new_client)
-      commandLoop acceptChan $ new_client:clients
+    Left new_client ->
+      case new_client of
+        Nothing -> do
+          -- if we are shutting the server down
+          foldr (\x _ -> closeClient x) (return ()) clients
+          return ()
+        Just nc -> do
+          debugInfo $ "new client at " ++ show (clientGetHandle nc)
+          commandLoop acceptChan $ nc:clients
     -- if a command arrived from a client processing thread
     Right (handle, command) -> do
       new_clients <- processCommand clients handle command
       commandLoop acceptChan $ new_clients
+    where closeClient :: Client
+                      -> IO ()
+          closeClient cl = do
+            debugInfo $ "Closing client at handle "
+              ++ (show $ clientGetHandle cl)
+            (hClose . clientGetHandle) cl
 
 
 {-|

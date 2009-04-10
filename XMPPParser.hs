@@ -175,6 +175,14 @@ processStream prefix chan elements = do
           else do
             sendCommand chan $ Error ("Invalid stream stanza: " ++ name)
             return Nothing
+      (SaxElementClose name) -> do       -- closing tag
+        if (matchesStringForPrefix name "stream" prefix) then do
+            debugInfo $ "Closing " ++ name ++ " tag!"
+            sendCommand chan $ EndOfStream
+            return Nothing
+          else do
+            sendCommand chan $ Error $ "Invalid closing tag: " ++ name
+            return Nothing
       (SaxCharData _) -> do              -- ignore CDATA
         remaining <- processStream prefix chan xs
         return $ Just remaining

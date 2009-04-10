@@ -40,46 +40,52 @@ processPresence :: String             -- ^ The stream namespace prefix
                 -> [Maybe SaxElement] -- ^ List of SAX events
                 -> IO (Maybe [Maybe SaxElement])
                 -- ^ The return value
-processPresence prefix attrs chan elements =
-  safely chan elements $
-    (\x xs -> case x of
-      (SaxElementOpen name _) ->            -- opening tag
-        if (matchesStringForPrefix name "show" prefix) then do
-            remains <- consumeTagsUpTo prefix chan xs "show"
-            case remains of
-              Nothing -> return Nothing
-              (Just xss) -> processPresence prefix attrs chan xss
---          else if (matchesStringForPrefix name "status" prefix) then do
---            remains <- consumeTagsUpTo prefix chan xs "status"
---            case remains of
---              Nothing -> return Nothing
---              (Just xss) -> processPresence prefix attrs chan xss
---          else if (matchesStringForPrefix name "priority" prefix) then do
---            remains <- consumeTagsUpTo prefix chan xs "priority"
---            case remains of
---              Nothing -> return Nothing
---              (Just xss) -> processPresence prefix attrs chan xss
-          else do
-            remains <- consumeTagsUpTo prefix chan xs name
-            case remains of
-              Nothing -> return Nothing
-              (Just xss) -> processPresence prefix attrs chan xss
-      (SaxElementTag _ _) -> do               -- empty tag
-        processPresence prefix attrs chan xs
-      (SaxElementClose name) ->               -- closing tag
-        if (matchesStringForPrefix name "presence" prefix) then
-            return $ Just xs
-          else do
+processPresence prefix attrs chan elements = do
+  case getValueOfAttribute attrs "type" of
+    Nothing -> do
+      rem_elements <- processPresenceWithType prefix chan elements Nothing
+      return rem_elements
+    (Just typ) ->
+      if (typ == "subscribe") then do
+          -- consume everything else
+          rem_elements <- consumeTagsUpTo prefix chan elements "presence"
+          return rem_elements
+        else do
+          -- process as usual
+          rem_elements <- processPresenceWithType prefix chan elements $
+            Just typ
+          return rem_elements
+  where
+    processPresenceWithType :: String
+                            -> TChan Command
+                            -> [Maybe SaxElement]
+                            -> Maybe String
+                            -> IO (Maybe [Maybe SaxElement])
+    processPresenceWithType pref ch elems typ =
+      safely ch elems $
+        (\x xs -> case x of
+          (SaxElementOpen name _) -> do           -- opening tag
+             remains <- consumeTagsUpTo pref ch xs name
+             case remains of
+               Nothing -> return Nothing
+               (Just xss) -> processPresenceWithType pref ch xss typ
+          (SaxElementTag _ _) -> do               -- empty tag
+            processPresenceWithType pref ch xs typ
+          (SaxElementClose name) ->               -- closing tag
+            if (matchesStringForPrefix name "presence" pref) then do
+                sendCommand chan $ SendPresence typ
+                return $ Just xs
+              else do
+                sendCommand chan $
+                  Error "Invalid closing tag, </presence> expected!"
+                return Nothing
+          (SaxCharData _) -> do                   -- ignore CDATA
+            processPresenceWithType pref ch xs typ
+          _ -> do                                 -- other
             sendCommand chan $
-              Error "Invalid closing tag, </presence> expected!"
+              Error "Invalid tag in presence processing!"
             return Nothing
-      (SaxCharData _) -> do                   -- ignore CDATA
-        processPresence prefix attrs chan xs
-      _ -> do                                 -- other
-        sendCommand chan $
-          Error "Invalid tag in presence processing!"
-        return Nothing
-    )
+        )
 
 
 {-|
@@ -87,5 +93,18 @@ processPresence prefix attrs chan elements =
  -}
 processPresenceEmpty :: [Attribute]         -- ^ List of node attributes
                      -> TChan Command       -- ^ Channel for sending commands
-                     -> IO (Maybe ())       -- ^ The return value
-processPresenceEmpty attrs chan = return $ Just ()
+                     -> IO ()               -- ^ The return value
+processPresenceEmpty attrs chan = do
+  case attrs `getValueOfAttribute` "type" of
+    Nothing -> do
+      sendPresenceEmpty Nothing
+    (Just typ) ->
+      if (typ == "subscribe") then
+          case attrs `getValueOfAttribute` "to" of
+            Nothing -> sendPresenceEmpty Nothing
+            (Just target) -> sendCommand chan $ AuthorizeSubscription target
+        else do
+          -- process as usual
+          sendPresenceEmpty $ Just typ
+  where sendPresenceEmpty t = sendCommand chan $ SendPresence t
+
